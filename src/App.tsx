@@ -1,10 +1,12 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { StatusBar } from "expo-status-bar";
+import { StyleSheet, Text, View } from "react-native";
+import ButtonPanel from "./components/ButtonPanel";
 
 export default function App() {
   return (
     <View style={styles.container}>
-      <Text>Boozy!!!</Text>
+      <Text>Boozy Commander</Text>
+      <ButtonPanel/>
       <StatusBar style="auto" />
     </View>
   );

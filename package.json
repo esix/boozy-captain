@@ -1,0 +1,27 @@
+{
+  "name": "boozy-captain",
+  "description": "description",
+  "license": "0BSD",
+  "version": "0.0.1",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "expo": "~52.0.0-preview.1",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.0-rc.6",
+    "react-dom": "18.3.1",
+    "@expo/metro-runtime": "~4.0.0-preview.0",
+    "react-native-web": "~0.19.13"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.20.0",
+    "@types/react": "~18.2.45",
+    "typescript": "^5.1.3"
+  }
+}

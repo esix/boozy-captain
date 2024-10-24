@@ -1,12 +1,11 @@
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, Text, View } from "react-native";
-import ButtonPanel from "./components/ButtonPanel";
+import MainPage from "./pages/MainPage";
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <Text>Boozy Commander</Text>
-      <ButtonPanel/>
+    <View style={styles.container} data-id="App">
+      <MainPage/>
       <StatusBar style="auto" />
     </View>
   );
@@ -14,9 +13,10 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: {
+    width: '100%',
     flex: 1,
     backgroundColor: '#fff',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
 });

@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 
-export default function ButtonPanel() {
+export default function ButtonBar() {
   return (
-    <Text>ButtonPanel</Text>
+    <Text>ButtonBar</Text>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 // import styles from "../styles/index.module.css";
-import { MainPage } from "@boozy/ui";
+import { MainPage } from "@bc/ui";
 
 
 export default function Web() {

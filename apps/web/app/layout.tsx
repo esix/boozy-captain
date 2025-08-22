@@ -1,3 +1,5 @@
+import '../styles/global.css';
+
 export default function RootLayout({
   children,
 }: {
@@ -5,7 +7,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
-    </html>
-  );
+    <head>
+      <link rel="stylesheet" href="/styles/global.css" precedence="default"/>
+    </head>
+    <body>
+      {children}
+    </body>
+    </html>);
 }

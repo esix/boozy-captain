@@ -1,5 +1,5 @@
 {
-  "extends": "@boozy/typescript-config/react-native-library.json",
+  "extends": "@bc/typescript-config/react-native-library.json",
   "include": ["."],
   "exclude": ["dist", "build", "node_modules"],
   "compilerOptions": {

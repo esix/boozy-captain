@@ -6,6 +6,7 @@
   ],
   "scripts": {
     "dev": "turbo run dev",
+    "web":   "turbo dev --filter=@boozy-captain/web...",
     "build": "turbo run build",
     "clean": "turbo run clean && rm -rf node_modules",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-path .gitignore"

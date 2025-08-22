@@ -1,5 +1,5 @@
 {
-  "name": "web",
+  "name": "@boozy-captain/web",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -9,15 +9,14 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@boozy/ui": "*",
-    "@boozy/ui-components": "*",
+    "@bc/ui": "*",
     "next": "^14.0.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-native-web": "^0.19.10"
   },
   "devDependencies": {
-    "@boozy/typescript-config": "*",
+    "@bc/typescript-config": "*",
     "@types/node": "^20.10.6",
     "@types/react": "^18.2.14",
     "@types/react-dom": "^18.2.18",

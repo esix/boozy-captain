@@ -1,5 +1,5 @@
 {
-  "name": "@boozy/ui",
+  "name": "@bc/ui",
   "version": "0.0.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,8 +9,8 @@
     "clean": "rm -rf dist"
   },
   "devDependencies": {
-    "@boozy/typescript-config": "*",
-    "@boozy/ui-components": "*",
+    "@bc/typescript-config": "*",
+    "@bc/ui-components": "*",
     "@types/react": "^18.2.14",
     "tsup": "^8.0.1",
     "typescript": "5.5.4"

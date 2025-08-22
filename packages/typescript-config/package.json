@@ -1,5 +1,5 @@
 {
-  "name": "@boozy/typescript-config",
+  "name": "@bc/typescript-config",
   "version": "0.0.0",
   "private": true,
   "publishConfig": {

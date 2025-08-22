@@ -5,7 +5,8 @@ import {
   Text,
   Pressable, View,
 } from "react-native";
-import { Button } from "@boozy/ui-components";
+import { Button } from "@bc/ui-components";
+import AppMenu from "../AppMenu/AppMenu";
 
 export interface MainPageProps {
   children?: any;
@@ -14,6 +15,7 @@ export interface MainPageProps {
 export function MainPage({ children }: MainPageProps) {
   return (
     <View style={styles.container}>
+      <AppMenu/>
       <Text style={styles.header}>WEB</Text>
       <Button
         onClick={() => {
@@ -23,15 +25,16 @@ export function MainPage({ children }: MainPageProps) {
         text="Boop"
       />
       {children}
-    </View>  );
+    </View>);
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
+    flexDirection: "column",
+    height: '100%',
+    alignItems: "flex-start",
+    justifyContent: "flex-start",
   },
   header: {
     fontWeight: "bold",

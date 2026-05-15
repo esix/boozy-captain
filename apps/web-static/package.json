@@ -1,0 +1,32 @@
+{
+  "name": "@bc/app-web-static",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo \"(lint not configured yet)\"",
+    "test": "echo \"(no tests)\""
+  },
+  "dependencies": {
+    "@bc/core": "workspace:*",
+    "@bc/fs-mock": "workspace:*",
+    "@bc/plugin-host": "workspace:*",
+    "@bc/ui-rn": "workspace:*",
+    "@bc/vfs": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-native-web": "^0.19.13"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "react-native": "^0.76.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

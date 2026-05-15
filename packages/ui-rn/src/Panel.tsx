@@ -8,14 +8,21 @@ export interface PanelProps {
   vfs: VfsRegistry;
   uri: Uri;
   onNavigate: (uri: Uri) => void;
+  focused?: boolean;
+  onFocus?: () => void;
 }
 
-export function Panel({ vfs, uri, onNavigate }: PanelProps): JSX.Element {
+export function Panel({ vfs, uri, onNavigate, focused = false, onFocus }: PanelProps): JSX.Element {
   const { entries, loading, error, reload } = useDirectoryStream(vfs, uri);
 
+  const navigate = (next: Uri): void => {
+    onFocus?.();
+    onNavigate(next);
+  };
+
   return (
-    <View style={styles.container}>
-      <PathBar uri={uri} onUp={() => onNavigate(parentUri(uri))} />
+    <Pressable onPress={onFocus} style={[styles.container, focused && styles.focused]}>
+      <PathBar uri={uri} onUp={() => navigate(parentUri(uri))} />
       <View style={styles.header}>
         <Text style={[styles.cell, styles.headerText, styles.nameCol]}>Name</Text>
         <Text style={[styles.cell, styles.headerText, styles.sizeCol]}>Size</Text>
@@ -27,7 +34,7 @@ export function Panel({ vfs, uri, onNavigate }: PanelProps): JSX.Element {
         <FlatList<Stat>
           data={entries}
           keyExtractor={(item) => item.uri}
-          renderItem={({ item }) => <Row item={item} onPress={() => handlePress(item, onNavigate)} />}
+          renderItem={({ item }) => <Row item={item} onPress={() => handlePress(item, navigate)} />}
           ListEmptyComponent={
             loading ? <Text style={styles.status}>Loading…</Text> : <Text style={styles.status}>Empty</Text>
           }
@@ -37,17 +44,23 @@ export function Panel({ vfs, uri, onNavigate }: PanelProps): JSX.Element {
         />
       )}
       <View style={styles.footer}>
-        <Pressable onPress={reload} style={styles.refresh}>
+        <Pressable
+          onPress={() => {
+            onFocus?.();
+            reload();
+          }}
+          style={styles.refresh}
+        >
           <Text style={styles.refreshText}>Refresh</Text>
         </Pressable>
         <Text style={styles.status}>{entries.length} item(s)</Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
-function handlePress(item: Stat, onNavigate: (uri: Uri) => void): void {
-  if (item.kind === "dir") onNavigate(item.uri);
+function handlePress(item: Stat, navigate: (uri: Uri) => void): void {
+  if (item.kind === "dir") navigate(item.uri);
 }
 
 function Row({ item, onPress }: { item: Stat; onPress: () => void }): JSX.Element {
@@ -79,6 +92,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#0b1117",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  focused: {
+    borderColor: "#38bdf8",
   },
   header: {
     flexDirection: "row",

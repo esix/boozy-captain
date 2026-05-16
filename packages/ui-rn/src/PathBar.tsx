@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { Uri } from "@bc/vfs";
+import { tcTheme } from "./theme.js";
 
 export interface PathBarProps {
   uri: Uri;
@@ -23,26 +24,30 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: "#1f2933",
+    backgroundColor: tcTheme.color.chromeBg,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
     borderBottomWidth: 1,
-    borderBottomColor: "#0b1117",
+    borderBottomColor: tcTheme.color.chromeBorder,
+    minHeight: 22,
   },
   up: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    marginRight: 8,
-    backgroundColor: "#334155",
-    borderRadius: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    marginRight: 6,
+    backgroundColor: tcTheme.color.fbarButtonBg,
+    borderWidth: 1,
+    borderColor: tcTheme.color.fbarButtonBorder,
   },
   upText: {
-    color: "#e2e8f0",
-    fontFamily: "monospace",
+    color: tcTheme.color.text,
+    fontFamily: tcTheme.font.ui,
+    fontSize: tcTheme.font.sizeSmall,
   },
   uri: {
-    color: "#e2e8f0",
-    fontFamily: "monospace",
+    color: tcTheme.color.text,
+    fontFamily: tcTheme.font.mono,
+    fontSize: tcTheme.font.sizeSmall,
     flexShrink: 1,
   },
 });

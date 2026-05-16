@@ -6,7 +6,9 @@
     <title>Boozy Captain</title>
     <style>
       html, body, #root { height: 100%; margin: 0; }
-      body { background: #0b1117; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { background: #F0F0F0; font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+      /* RN-Web sets outline on focused TextInput; TC's command line has no halo. */
+      input { outline: none !important; }
     </style>
   </head>
   <body>

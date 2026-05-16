@@ -1,4 +1,4 @@
-export { type HostApi, createHost } from "./host.js";
+export { type CreateHostOpts, type HostApi, createHost } from "./host.js";
 export { type BcManifest, bcManifestSchema, parseManifest } from "./manifest.js";
 export {
   type PluginModule,

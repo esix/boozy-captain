@@ -1047,6 +1047,8 @@ __metadata:
     "@bc/core": "workspace:*"
     "@bc/fs-mock": "workspace:*"
     "@bc/plugin-host": "workspace:*"
+    "@bc/surfaces": "workspace:*"
+    "@bc/surfaces-web": "workspace:*"
     "@bc/ui-rn": "workspace:*"
     "@bc/vfs": "workspace:*"
     "@types/react": "npm:^18.3.12"
@@ -1086,9 +1088,38 @@ __metadata:
   resolution: "@bc/plugin-host@workspace:packages/plugin-host"
   dependencies:
     "@bc/core": "workspace:*"
+    "@bc/surfaces": "workspace:*"
     "@bc/vfs": "workspace:*"
     typescript: "npm:^5.6.3"
     zod: "npm:^3.23.8"
+  languageName: unknown
+  linkType: soft
+
+"@bc/surfaces-web@workspace:*, @bc/surfaces-web@workspace:packages/surfaces-web":
+  version: 0.0.0-use.local
+  resolution: "@bc/surfaces-web@workspace:packages/surfaces-web"
+  dependencies:
+    "@bc/surfaces": "workspace:*"
+    "@bc/ui-rn": "workspace:*"
+    "@types/react": "npm:^18.3.12"
+    react: "npm:^18.3.1"
+    react-native: "npm:^0.76.0"
+    typescript: "npm:^5.6.3"
+  peerDependencies:
+    react: ^18.3.0
+    react-native: ^0.76.0
+  languageName: unknown
+  linkType: soft
+
+"@bc/surfaces@workspace:*, @bc/surfaces@workspace:packages/surfaces":
+  version: 0.0.0-use.local
+  resolution: "@bc/surfaces@workspace:packages/surfaces"
+  dependencies:
+    "@types/react": "npm:^18.3.12"
+    react: "npm:^18.3.1"
+    typescript: "npm:^5.6.3"
+  peerDependencies:
+    react: ^18.3.0
   languageName: unknown
   linkType: soft
 

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@bc/core": "workspace:*",
+    "@bc/file-list": "workspace:*",
     "@bc/fs-mock": "workspace:*",
     "@bc/plugin-host": "workspace:*",
     "@bc/surfaces": "workspace:*",

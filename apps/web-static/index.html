@@ -6,13 +6,68 @@
     <title>Boozy Captain</title>
     <style>
       html, body, #root { height: 100%; margin: 0; }
-      body { background: #F0F0F0; font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
-      /* RN-Web sets outline on focused TextInput; TC's command line has no halo. */
-      input { outline: none !important; }
+      body {
+        background: #F0F0F0;
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+        /* TC-style: clicking files doesn't drag-select text. Inputs override below. */
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      input, textarea { user-select: text; -webkit-user-select: text; outline: none !important; }
+      /* RN-Web focuses Pressables (role=button) on click; we don't want the
+         default browser focus ring around file rows — the cursor row colour
+         already indicates focus. */
+      [role="button"]:focus, [role="button"]:focus-visible { outline: none !important; }
+      /* Pulsing loading dot used in panel footers while streaming. */
+      @keyframes bcLoadingPulse {
+        0%   { opacity: 0.35; transform: scale(0.9); }
+        50%  { opacity: 1;    transform: scale(1.1); }
+        100% { opacity: 0.35; transform: scale(0.9); }
+      }
+      /* TC-style scrollbars: thin (TC's are ~8px). Applied with !important to
+         beat RN-Web's per-ScrollView scrollbar styles. Plus Firefox props. */
+      /*
+       * TC-style thin scrollbars. RN-Web ScrollView injects a class
+       * `r-scrollbarWidth-...` with `scrollbar-width: none` AND
+       * `::-webkit-scrollbar { display: none }`, killing the scrollbar.
+       *
+       * We override `scrollbar-width: auto` (so Chrome falls back to webkit
+       * pseudo-element styling) and re-enable + size the bar via webkit pseudo.
+       * Importantly we do NOT set `scrollbar-color` — it would switch Chrome to
+       * native-style rendering that ignores `::-webkit-scrollbar`.
+       */
+      [class*="r-scrollbarWidth"], html { scrollbar-width: auto !important; }
+      [class*="r-scrollbarWidth"]::-webkit-scrollbar,
+      html ::-webkit-scrollbar {
+        display: block !important;
+        width: 8px !important;
+        height: 8px !important;
+      }
+      [class*="r-scrollbarWidth"]::-webkit-scrollbar-track,
+      html ::-webkit-scrollbar-track { background: #F0F0F0 !important; }
+      [class*="r-scrollbarWidth"]::-webkit-scrollbar-thumb,
+      html ::-webkit-scrollbar-thumb { background: #C0C0C0 !important; border: 1px solid #A0A0A0 !important; }
+      [class*="r-scrollbarWidth"]::-webkit-scrollbar-thumb:hover,
+      html ::-webkit-scrollbar-thumb:hover { background: #A0A0A0 !important; }
+      [class*="r-scrollbarWidth"]::-webkit-scrollbar-corner,
+      html ::-webkit-scrollbar-corner { background: #F0F0F0 !important; }
     </style>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Prevent RN-Web role=button elements from stealing focus on click.
+      // Without this, clicking the column header / tab / toolbar button puts
+      // focus on that element, and the next Space/Enter activates it again
+      // instead of reaching the panel-level keyboard handler. Mousedown
+      // preventDefault stops the focus move without breaking click events.
+      document.addEventListener("mousedown", function (e) {
+        var t = e.target;
+        if (!(t instanceof HTMLElement)) return;
+        if (t.closest("input, textarea, [contenteditable='true']")) return;
+        if (t.closest("[role='button']")) e.preventDefault();
+      }, true);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

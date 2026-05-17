@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { CommandRegistry } from "@bc/core";
+import {
+  FileList,
+  createDefaultRegistry,
+  formatSize,
+  type FileListView,
+  type FileListViewRegistry,
+  type Row,
+  type SortSpec,
+} from "@bc/file-list";
 import type { Stat, Uri, VfsRegistry } from "@bc/vfs";
 import { parentUri } from "@bc/vfs";
+import { DriveBar } from "./DriveBar.js";
 import { PathBar } from "./PathBar.js";
+import { TabBar, type TabSpec } from "./TabBar.js";
 import { tcTheme } from "./theme.js";
 import { useDirectoryStream } from "./useDirectoryStream.js";
 import { useGlobalHotkeys } from "./useGlobalHotkeys.js";
@@ -15,6 +26,14 @@ export interface PanelSelection {
   marked: readonly Stat[];
 }
 
+export interface PanelTabsProps {
+  items: readonly TabSpec[];
+  activeId: string;
+  onActivate: (id: string) => void;
+  onClose?: (id: string) => void;
+  onNew?: () => void;
+}
+
 export interface PanelProps {
   vfs: VfsRegistry;
   uri: Uri;
@@ -22,6 +41,16 @@ export interface PanelProps {
   focused?: boolean;
   onFocus?: () => void;
   onSelectionChange?: (sel: PanelSelection) => void;
+  /** Optional registry; defaults to the built-in Brief + Full views. */
+  viewRegistry?: FileListViewRegistry;
+  /** Initial view mode id; default "brief" (TC's user setting). */
+  initialViewId?: string;
+  /** Optional tab strip above the panel. Hidden when undefined. */
+  tabs?: PanelTabsProps;
+  /** Optional free-space line shown in the DriveBar. */
+  driveInfo?: string;
+  /** Prefix for data-testid attributes on this panel and its children. */
+  testID?: string;
 }
 
 const PAGE_SIZE = 10;
@@ -33,26 +62,65 @@ export function Panel({
   focused = false,
   onFocus,
   onSelectionChange,
+  viewRegistry,
+  initialViewId = "brief",
+  tabs,
+  driveInfo,
+  testID = "bc-panel",
 }: PanelProps): JSX.Element {
-  const { entries, loading, error, reload } = useDirectoryStream(vfs, uri);
-  const [cursor, setCursor] = useState(0);
-  const [marked, setMarked] = useState<Set<Uri>>(new Set());
-  const flatListRef = useRef<FlatList<Stat> | null>(null);
+  const registry = useMemo(() => viewRegistry ?? createDefaultRegistry(), [viewRegistry]);
+  const [viewId, setViewId] = useState<string>(initialViewId);
+  const view: FileListView = registry.get(viewId) ?? registry.list()[0]!;
 
-  // Reset selection when uri changes
+  const { entries, loading, error, reload } = useDirectoryStream(vfs, uri);
+  // Cursor identity is a URI (so it follows the file when streaming sort
+  // reorders rows). Derived `cursor` index is recomputed each render.
+  const [cursorUri, setCursorUri] = useState<Uri | null>(null);
+  const [marked, setMarked] = useState<Set<Uri>>(new Set());
+  const [sort, setSort] = useState<SortSpec>({ key: "name", direction: "asc" });
+  // Horizontal stride reported by the active view. 0 = no horizontal nav
+  // (single-column view); >0 = move cursor by that many indices on Left/Right.
+  const [columnStride, setColumnStride] = useState(0);
+
+  // Reset selection when uri changes; cursor lands on [..] (parent row).
   useEffect(() => {
-    setCursor(0);
+    setCursorUri(parentUri(uri));
     setMarked(new Set());
   }, [uri]);
 
-  // Keep cursor in range as entries stream in
-  useEffect(() => {
-    if (cursor >= entries.length && entries.length > 0) setCursor(entries.length - 1);
-  }, [entries.length, cursor]);
+  // Build rows: synthetic [..] always first, then directories (always
+  // alphabetical regardless of sort mode), then files sorted per `sort`.
+  const rows = useMemo<Row[]>(() => {
+    const parent: Row = { kind: "parent", uri: parentUri(uri) };
+    const dirs: Stat[] = [];
+    const files: Stat[] = [];
+    for (const e of entries) (e.kind === "dir" ? dirs : files).push(e);
+    dirs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    files.sort((a, b) => compareEntries(a, b, sort));
+    const toRow = (stat: Stat): Row => ({ kind: "entry", stat });
+    return [parent, ...dirs.map(toRow), ...files.map(toRow)];
+  }, [uri, entries, sort]);
 
-  const cursorItem: Stat | null = entries[cursor] ?? null;
+  // Derive cursor index from cursorUri + current rows. If the cursorUri
+  // doesn't appear (e.g. file removed), fall back to row 0 ([..]).
+  const cursor = useMemo(() => {
+    if (cursorUri === null) return 0;
+    const idx = rows.findIndex((r) => uriOfRow(r) === cursorUri);
+    return idx >= 0 ? idx : 0;
+  }, [cursorUri, rows]);
 
-  // Push selection up so the App can dispatch F-key commands against it
+  // Index-based setter used by views: convert to URI and persist.
+  const setCursor = useCallback(
+    (idx: number) => {
+      const r = rows[idx];
+      if (r) setCursorUri(uriOfRow(r));
+    },
+    [rows],
+  );
+
+  const cursorRow: Row | null = rows[cursor] ?? null;
+  const cursorItem: Stat | null = cursorRow?.kind === "entry" ? cursorRow.stat : null;
+
   useEffect(() => {
     onSelectionChange?.({
       entries,
@@ -72,51 +140,73 @@ export function Panel({
     [onFocus, onNavigate],
   );
 
-  const activate = useCallback((): void => {
-    const item = cursorItem;
-    if (item && item.kind === "dir") navigate(item.uri);
-  }, [cursorItem, navigate]);
+  const activateRow = useCallback(
+    (row: Row): void => {
+      onFocus?.();
+      if (row.kind === "parent") {
+        navigate(row.uri);
+        return;
+      }
+      if (row.stat.kind === "dir") navigate(row.stat.uri);
+    },
+    [navigate, onFocus],
+  );
 
   const moveCursor = useCallback(
     (delta: number): void => {
-      if (entries.length === 0) return;
-      setCursor((c) => clamp(c + delta, 0, entries.length - 1));
+      if (rows.length === 0) return;
+      setCursor(clamp(cursor + delta, 0, rows.length - 1));
     },
-    [entries.length],
+    [rows.length, cursor, setCursor],
   );
 
   const moveCursorTo = useCallback(
     (pos: "start" | "end"): void => {
-      if (entries.length === 0) return;
-      setCursor(pos === "start" ? 0 : entries.length - 1);
+      if (rows.length === 0) return;
+      setCursor(pos === "start" ? 0 : rows.length - 1);
     },
-    [entries.length],
+    [rows.length, setCursor],
   );
 
   const toggleMarkAt = useCallback(
     (idx: number): void => {
-      const item = entries[idx];
-      if (!item) return;
+      const row = rows[idx];
+      if (!row || row.kind === "parent") return;
       setMarked((prev) => {
         const next = new Set(prev);
-        if (next.has(item.uri)) next.delete(item.uri);
-        else next.add(item.uri);
+        if (next.has(row.stat.uri)) next.delete(row.stat.uri);
+        else next.add(row.stat.uri);
         return next;
       });
     },
-    [entries],
+    [rows],
   );
 
-  // Panel-local hotkeys, only when focused
   const panelRegistry = useMemo(() => {
     const r = new CommandRegistry();
     r.register({ id: "panel.cursorUp", title: "Up", run: () => moveCursor(-1) });
     r.register({ id: "panel.cursorDown", title: "Down", run: () => moveCursor(1) });
     r.register({ id: "panel.cursorPageUp", title: "PgUp", run: () => moveCursor(-PAGE_SIZE) });
     r.register({ id: "panel.cursorPageDown", title: "PgDn", run: () => moveCursor(PAGE_SIZE) });
+    r.register({
+      id: "panel.cursorLeft",
+      title: "Left",
+      run: () => moveCursor(columnStride > 0 ? -columnStride : 0),
+    });
+    r.register({
+      id: "panel.cursorRight",
+      title: "Right",
+      run: () => moveCursor(columnStride > 0 ? columnStride : 0),
+    });
     r.register({ id: "panel.cursorHome", title: "Home", run: () => moveCursorTo("start") });
     r.register({ id: "panel.cursorEnd", title: "End", run: () => moveCursorTo("end") });
-    r.register({ id: "panel.activate", title: "Enter", run: () => activate() });
+    r.register({
+      id: "panel.activate",
+      title: "Enter",
+      run: () => {
+        if (cursorRow) activateRow(cursorRow);
+      },
+    });
     r.register({
       id: "panel.up",
       title: "Backspace",
@@ -135,153 +225,170 @@ export function Panel({
         moveCursor(1);
       },
     });
+    r.register({ id: "panel.reload", title: "Refresh", run: () => reload() });
     return r;
-  }, [moveCursor, moveCursorTo, activate, navigate, uri, toggleMarkAt, cursor]);
+  }, [
+    moveCursor,
+    moveCursorTo,
+    activateRow,
+    cursorRow,
+    navigate,
+    uri,
+    toggleMarkAt,
+    cursor,
+    reload,
+    columnStride,
+  ]);
 
   const hotkeyMap = useMemo(
     () => ({
       ArrowUp: "panel.cursorUp",
       ArrowDown: "panel.cursorDown",
+      ArrowLeft: "panel.cursorLeft",
+      ArrowRight: "panel.cursorRight",
       PageUp: "panel.cursorPageUp",
       PageDown: "panel.cursorPageDown",
       Home: "panel.cursorHome",
       End: "panel.cursorEnd",
       Enter: "panel.activate",
-      Backspace: "panel.up",
       " ": "panel.toggleMark",
       Insert: "panel.toggleMarkAndAdvance",
+      F2: "panel.reload",
     }),
     [],
   );
 
   useGlobalHotkeys({ map: hotkeyMap, registry: panelRegistry, enabled: focused });
 
-  // Keep cursor row visible
+  // Quick search: typing printable chars in the focused panel jumps the cursor
+  // to the first row whose name starts with the query. Esc / 1.5s idle resets.
+  // Skips while typing in inputs (command line).
+  const [quickQuery, setQuickQuery] = useState("");
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!flatListRef.current) return;
-    if (entries.length === 0) return;
-    try {
-      flatListRef.current.scrollToIndex({ index: cursor, viewPosition: 0.5, animated: false });
-    } catch {
-      // scrollToIndex may throw on rapid mounts; ignore.
-    }
-  }, [cursor, entries.length]);
+    if (!focused) return;
+    const handler = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      let nextQuery: string | null = null;
+      if (e.key === "Escape") {
+        nextQuery = "";
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        if (quickQuery.length > 0) {
+          nextQuery = quickQuery.slice(0, -1);
+        } else {
+          // Empty query: Backspace navigates up.
+          navigate(parentUri(uri));
+          return;
+        }
+      } else if (e.key.length === 1 && e.key !== " ") {
+        nextQuery = (quickQuery + e.key).toLowerCase();
+        e.preventDefault();
+      }
+      if (nextQuery === null) return;
+      setQuickQuery(nextQuery);
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      idleTimer.current = setTimeout(() => setQuickQuery(""), 1500);
+      if (nextQuery.length === 0) return;
+      const idx = rows.findIndex((r) => {
+        if (r.kind === "parent") return false;
+        return r.stat.name.toLowerCase().startsWith(nextQuery!);
+      });
+      if (idx >= 0) setCursor(idx);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [focused, quickQuery, rows, navigate, uri]);
+  useEffect(() => {
+    return () => {
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+    };
+  }, []);
+
+  const markedUriSet = useMemo(() => new Set(marked), [marked]);
+
+  // RN-Web's Pressable defaults to tabIndex=0 (role=button) — making it a
+  // focus target so Space/Enter pressed afterwards activate the Pressable
+  // instead of reaching the panel's keyboard handler. Take it out of the
+  // focus order entirely.
+  const nonFocusable = {
+    tabIndex: -1,
+    onMouseDown: (e: { preventDefault(): void }) => e.preventDefault(),
+  } as unknown as object;
 
   return (
-    <Pressable onPress={onFocus} style={[styles.container, focused && styles.focused]}>
-      <PathBar uri={uri} onUp={() => navigate(parentUri(uri))} />
-      <View style={styles.header}>
-        <Text style={[styles.cell, styles.headerText, styles.nameCol]}>Name</Text>
-        <Text style={[styles.cell, styles.headerText, styles.extCol]}>Ext</Text>
-        <Text style={[styles.cell, styles.headerText, styles.sizeCol]}>Size</Text>
-        <Text style={[styles.cell, styles.headerText, styles.dateCol]}>Date</Text>
+    <Pressable
+      onPress={onFocus}
+      {...nonFocusable}
+      style={[styles.container, focused && styles.focused]}
+      testID={testID}
+    >
+      <DriveBar uri={uri} info={driveInfo} onNavigate={navigate} testID={`${testID}-drivebar`} />
+      {tabs ? (
+        <TabBar
+          tabs={tabs.items}
+          activeId={tabs.activeId}
+          onActivate={tabs.onActivate}
+          onClose={tabs.onClose}
+          onNew={tabs.onNew}
+          testID={`${testID}-tabbar`}
+        />
+      ) : null}
+      <PathBar uri={uri} onNavigate={navigate} testID={`${testID}-pathbar`} />
+      <View style={styles.viewSwitcher} testID={`${testID}-viewswitcher`}>
+        {registry.list().map((v) => (
+          <Pressable
+            key={v.id}
+            onPress={() => {
+              onFocus?.();
+              setViewId(v.id);
+            }}
+            style={[styles.modeButton, v.id === view.id && styles.modeButtonActive]}
+            testID={`${testID}-viewmode-${v.id}`}
+          >
+            <Text style={[styles.modeText, v.id === view.id && styles.modeTextActive]}>
+              {v.label}
+            </Text>
+          </Pressable>
+        ))}
       </View>
       {error ? (
         <Text style={styles.error}>Error: {error.message}</Text>
       ) : (
-        <FlatList<Stat>
-          ref={flatListRef}
-          data={entries}
-          keyExtractor={(item) => item.uri}
-          getItemLayout={(_, index) => ({ length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index })}
-          onScrollToIndexFailed={() => {
-            /* ignored */
+        <FileList
+          view={view}
+          rows={rows}
+          cursor={cursor}
+          marked={markedUriSet}
+          focused={focused}
+          loading={loading}
+          sort={sort}
+          onCursorMove={setCursor}
+          onActivate={activateRow}
+          onChangeSort={setSort}
+          onToggleMark={(i) => {
+            onFocus?.();
+            setCursor(i);
+            toggleMarkAt(i);
           }}
-          renderItem={({ item, index }) => (
-            <Row
-              item={item}
-              index={index}
-              cursor={cursor}
-              marked={marked.has(item.uri)}
-              focused={focused}
-              onPress={() => {
-                onFocus?.();
-                setCursor(index);
-              }}
-              onDoublePress={() => {
-                onFocus?.();
-                setCursor(index);
-                if (item.kind === "dir") navigate(item.uri);
-              }}
-            />
-          )}
-          ListEmptyComponent={
-            loading ? <Text style={styles.status}>Reading…</Text> : <Text style={styles.status}>Empty</Text>
-          }
-          ListFooterComponent={
-            loading && entries.length > 0 ? <Text style={styles.status}>Reading more…</Text> : null
-          }
+          onColumnStride={setColumnStride}
         />
       )}
       <View style={styles.footer}>
         <Text style={styles.footerText} numberOfLines={1}>
           {summary}
         </Text>
-        <Pressable
-          onPress={() => {
-            onFocus?.();
-            reload();
-          }}
-          style={styles.refresh}
-        >
-          <Text style={styles.refreshText}>Refresh</Text>
-        </Pressable>
+        {loading ? (
+          <View style={styles.loadingDot} />
+        ) : null}
+        {quickQuery.length > 0 ? (
+          <Text style={styles.quickQuery} numberOfLines={1}>
+            Search: {quickQuery}
+          </Text>
+        ) : null}
       </View>
-    </Pressable>
-  );
-}
-
-const ROW_HEIGHT = 18;
-
-interface RowProps {
-  item: Stat;
-  index: number;
-  cursor: number;
-  marked: boolean;
-  focused: boolean;
-  onPress: () => void;
-  onDoublePress: () => void;
-}
-
-function Row({ item, index, cursor, marked, focused, onPress, onDoublePress }: RowProps): JSX.Element {
-  const isDir = item.kind === "dir";
-  const isCursor = index === cursor;
-  const { displayName, ext } = splitName(item.name, isDir);
-
-  const rowBg =
-    isCursor && focused
-      ? tcTheme.color.cursorBg
-      : isCursor
-        ? tcTheme.color.cursorBgInactive
-        : "transparent";
-  const baseTextColor =
-    isCursor && focused
-      ? tcTheme.color.cursorText
-      : isCursor
-        ? tcTheme.color.cursorTextInactive
-        : tcTheme.color.text;
-  const textColor = marked && !isCursor ? tcTheme.color.textMarked : baseTextColor;
-
-  const lastTap = useRef(0);
-  const handlePress = (): void => {
-    const now = Date.now();
-    if (now - lastTap.current < 300) onDoublePress();
-    else onPress();
-    lastTap.current = now;
-  };
-
-  return (
-    <Pressable onPress={handlePress} style={[styles.row, { backgroundColor: rowBg, height: ROW_HEIGHT }]}>
-      <Text style={[styles.cell, styles.nameCol, { color: textColor }]} numberOfLines={1}>
-        {displayName}
-      </Text>
-      <Text style={[styles.cell, styles.extCol, { color: textColor }]} numberOfLines={1}>
-        {ext}
-      </Text>
-      <Text style={[styles.cell, styles.sizeCol, { color: textColor }]}>
-        {isDir ? "<DIR>" : formatSize(item.size)}
-      </Text>
-      <Text style={[styles.cell, styles.dateCol, { color: textColor }]}>{formatDate(item.mtime)}</Text>
     </Pressable>
   );
 }
@@ -290,11 +397,33 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function splitName(raw: string, isDir: boolean): { displayName: string; ext: string } {
-  if (isDir) return { displayName: `[${raw}]`, ext: "" };
-  const dot = raw.lastIndexOf(".");
-  if (dot <= 0) return { displayName: raw, ext: "" };
-  return { displayName: raw.slice(0, dot), ext: raw.slice(dot + 1) };
+function uriOfRow(r: Row): Uri {
+  return r.kind === "parent" ? r.uri : r.stat.uri;
+}
+
+function compareEntries(a: Stat, b: Stat, sort: SortSpec): number {
+  let cmp = 0;
+  switch (sort.key) {
+    case "name":
+      cmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      break;
+    case "ext":
+      cmp = extOf(a.name).localeCompare(extOf(b.name), undefined, { sensitivity: "base" });
+      if (cmp === 0) cmp = a.name.localeCompare(b.name);
+      break;
+    case "size":
+      cmp = a.size - b.size;
+      break;
+    case "date":
+      cmp = a.mtime - b.mtime;
+      break;
+  }
+  return sort.direction === "asc" ? cmp : -cmp;
+}
+
+function extOf(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
 }
 
 function computeSummary(entries: Stat[], marked: Set<Uri>): string {
@@ -311,58 +440,41 @@ function computeSummary(entries: Stat[], marked: Set<Uri>): string {
   return `${markedCount} / ${total} file(s), ${formatSize(markedSize)} / ${formatSize(totalSize)} marked`;
 }
 
-function formatSize(n: number): string {
-  if (n < 1024) return `${n} b`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} k`;
-  return `${(n / 1024 / 1024).toFixed(1)} M`;
-}
-
-function formatDate(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number): string => n.toString().padStart(2, "0");
-  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tcTheme.color.panelBg,
-    borderWidth: 1,
-    borderColor: tcTheme.color.panelBorder,
   },
   focused: {
+    // Focus indicator lives in the cursor-row color now; no panel border.
+  },
+  viewSwitcher: {
+    flexDirection: "row",
+    backgroundColor: tcTheme.color.chromeBg,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderBottomWidth: 1,
+    borderBottomColor: tcTheme.color.chromeBorder,
+  },
+  modeButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 1,
+    marginRight: 4,
+    borderWidth: 1,
+    borderColor: tcTheme.color.chromeBorder,
+    backgroundColor: tcTheme.color.fbarButtonBg,
+  },
+  modeButtonActive: {
+    backgroundColor: tcTheme.color.panelBorderFocused,
     borderColor: tcTheme.color.panelBorderFocused,
   },
-  header: {
-    flexDirection: "row",
-    backgroundColor: tcTheme.color.headerBg,
-    paddingVertical: 2,
-    paddingHorizontal: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: tcTheme.color.headerBorder,
-  },
-  headerText: {
-    color: tcTheme.color.headerText,
-    fontWeight: "600",
-  },
-  row: {
-    flexDirection: "row",
-    paddingHorizontal: 4,
-    alignItems: "center",
-  },
-  cell: {
+  modeText: {
+    color: tcTheme.color.text,
     fontFamily: tcTheme.font.ui,
-    fontSize: tcTheme.font.size,
+    fontSize: tcTheme.font.sizeSmall,
   },
-  nameCol: { flex: 3 },
-  extCol: { flex: 1 },
-  sizeCol: { flex: 1, textAlign: "right", paddingRight: 8 },
-  dateCol: { flex: 2, textAlign: "right" },
-  status: {
-    color: tcTheme.color.textDim,
-    fontFamily: tcTheme.font.ui,
-    fontSize: tcTheme.font.size,
-    padding: 6,
+  modeTextActive: {
+    color: "#FFFFFF",
   },
   error: {
     color: tcTheme.color.textMarked,
@@ -386,17 +498,26 @@ const styles = StyleSheet.create({
     fontSize: tcTheme.font.sizeSmall,
     flexShrink: 1,
   },
-  refresh: {
-    backgroundColor: tcTheme.color.fbarButtonBg,
-    borderWidth: 1,
-    borderColor: tcTheme.color.fbarButtonBorder,
-    paddingVertical: 1,
-    paddingHorizontal: 8,
-    marginLeft: 6,
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: tcTheme.color.panelBorderFocused,
+    marginLeft: 8,
+    // @ts-expect-error RN-Web-only animation props.
+    animationKeyframes: [
+      { "0%": { opacity: 0.3 }, "50%": { opacity: 1 }, "100%": { opacity: 0.3 } },
+    ],
+    animationDuration: "1.2s",
+    animationIterationCount: "infinite",
+    animationTimingFunction: "ease-in-out",
   },
-  refreshText: {
-    color: tcTheme.color.text,
-    fontFamily: tcTheme.font.ui,
+  quickQuery: {
+    color: tcTheme.color.panelBorderFocused,
+    fontFamily: tcTheme.font.mono,
     fontSize: tcTheme.font.sizeSmall,
+    marginLeft: 8,
+    paddingHorizontal: 4,
+    backgroundColor: tcTheme.color.cursorBgInactive,
   },
 });

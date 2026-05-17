@@ -1,0 +1,297 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
+import { tcTheme } from "@bc/theme";
+import { ColumnHeader, type ColumnDef } from "./ColumnHeader.js";
+import { RowIcon } from "./RowIcon.js";
+import { ROW_HEIGHT, rowColors, splitName } from "./rowStyle.js";
+import type { FileListView, FileListViewProps, Row } from "./types.js";
+
+// Brief renders all four headers (matches TC) even though body only has name+ext.
+const COLUMNS: readonly ColumnDef[] = [
+  { key: "name", label: "Name", flex: 3 },
+  { key: "ext", label: "Ext", flex: 1 },
+  { key: "size", label: "Size", flex: 1, alignRight: true },
+  { key: "date", label: "Date", flex: 2, alignRight: true },
+];
+
+const HEADER_HEIGHT = 18;
+const SCROLLBAR_HEIGHT = 8; // matches index.html ::-webkit-scrollbar height
+const NAME_EXT_GAP = 8;
+const COL_GUTTER = 8;
+const MIN_COL_WIDTH = 80;
+
+/**
+ * TC's Brief mode: items flow column-major into a multi-column newspaper
+ * layout. Column width is determined by the longest item; horizontal
+ * ScrollView when columns overflow. Header stays as the 4-column TC header.
+ */
+function BriefBody(props: FileListViewProps): JSX.Element {
+  const {
+    rows,
+    cursor,
+    marked,
+    focused,
+    loading,
+    sort,
+    onCursorMove,
+    onActivate,
+    onChangeSort,
+    onToggleMark,
+    onColumnStride,
+  } = props;
+  const [container, setContainer] = useState({ width: 0, height: 0 });
+  const scrollRef = useRef<ScrollView | null>(null);
+
+  const display = useMemo(() => rows.map(displayFor), [rows]);
+
+  // Measure the widest item via Canvas (web only). Falls back to a
+  // character-count estimate so native RN still renders something sensible.
+  const widest = useMemo(() => {
+    const estimate = (s: string): number => s.length * 7.2; // crude Segoe-ish
+    if (typeof document !== "undefined") {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.font = `${tcTheme.font.size}px ${tcTheme.font.ui}`;
+        let max = MIN_COL_WIDTH;
+        for (const d of display) {
+          const w =
+            ctx.measureText(d.name).width +
+            (d.ext ? ctx.measureText(d.ext).width + NAME_EXT_GAP : 0);
+          if (w > max) max = w;
+        }
+        return Math.ceil(max);
+      }
+    }
+    let max = MIN_COL_WIDTH;
+    for (const d of display) {
+      const w = estimate(d.name) + (d.ext ? estimate(d.ext) + NAME_EXT_GAP : 0);
+      if (w > max) max = w;
+    }
+    return Math.ceil(max);
+  }, [display]);
+
+  // Column width capped to panel width; if a single name is wider, truncate.
+  // Add overhead for row padding (2*4) + icon (14) + icon margin (2) + gutter.
+  const ROW_OVERHEAD = 8 + 14 + 2 + COL_GUTTER;
+  const naturalColWidth = widest + ROW_OVERHEAD;
+  const colWidth =
+    container.width > 0 && naturalColWidth > container.width ? container.width : naturalColWidth;
+
+  // Two-pass height calculation: figure out if a horizontal scrollbar will
+  // appear, and if so reserve its height so the last row isn't clipped.
+  const baseBodyHeight = Math.max(0, container.height - HEADER_HEIGHT);
+  const naiveRowsPerCol = Math.max(1, Math.floor(baseBodyHeight / ROW_HEIGHT));
+  const naiveCols = Math.ceil(rows.length / naiveRowsPerCol);
+  const willScroll = container.width > 0 && naiveCols * colWidth > container.width;
+  const bodyHeight = Math.max(0, baseBodyHeight - (willScroll ? SCROLLBAR_HEIGHT : 0));
+  const rowsPerCol = Math.max(1, Math.floor(bodyHeight / ROW_HEIGHT));
+
+  const columns: Row[][] = useMemo(() => {
+    if (rows.length === 0) return [];
+    const cols: Row[][] = [];
+    for (let c = 0; c < Math.ceil(rows.length / rowsPerCol); c++) {
+      cols.push(rows.slice(c * rowsPerCol, (c + 1) * rowsPerCol));
+    }
+    return cols;
+  }, [rows, rowsPerCol]);
+
+  useEffect(() => {
+    if (!scrollRef.current || container.width === 0 || rowsPerCol === 0) return;
+    const cursorCol = Math.floor(cursor / rowsPerCol);
+    const x = Math.max(0, cursorCol * colWidth - colWidth);
+    scrollRef.current.scrollTo({ x, animated: false });
+  }, [cursor, rowsPerCol, colWidth, container.width]);
+
+  // Report the horizontal stride so the panel's ArrowLeft/Right move cursor
+  // by one column in either direction.
+  useEffect(() => {
+    onColumnStride?.(rowsPerCol);
+    return () => onColumnStride?.(0);
+  }, [rowsPerCol, onColumnStride]);
+
+  const onLayout = (e: LayoutChangeEvent): void => {
+    const { width, height } = e.nativeEvent.layout;
+    setContainer({ width, height });
+  };
+
+  return (
+    <View style={styles.container} onLayout={onLayout}>
+      <ColumnHeader columns={COLUMNS} sort={sort} onChangeSort={onChangeSort} />
+      {rows.length === 0 ? (
+        <Text style={styles.status}>{loading ? "Reading…" : "Empty"}</Text>
+      ) : null}
+      {rows.length > 0 ? (
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          showsHorizontalScrollIndicator
+          style={styles.scrollOuter}
+          contentContainerStyle={styles.scrollContent}
+        >
+          {columns.map((colRows, ci) => (
+            <View key={ci} style={[styles.column, { width: colWidth }]}>
+              {colRows.map((row, ri) => {
+                const flatIndex = ci * rowsPerCol + ri;
+                return (
+                  <BriefRow
+                    key={row.kind === "parent" ? "_parent" : row.stat.uri}
+                    row={row}
+                    display={display[flatIndex]!}
+                    isCursor={flatIndex === cursor}
+                    focused={focused}
+                    isMarked={row.kind === "entry" ? marked.has(row.stat.uri) : false}
+                    onPress={() => onCursorMove(flatIndex)}
+                    onDoublePress={() => {
+                      onCursorMove(flatIndex);
+                      onActivate(row);
+                    }}
+                    onContextMenu={() => onToggleMark?.(flatIndex)}
+                  />
+                );
+              })}
+            </View>
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
+interface DisplayParts {
+  name: string;
+  ext: string;
+}
+
+function displayFor(row: Row): DisplayParts {
+  if (row.kind === "parent") return { name: "[..]", ext: "" };
+  const s = splitName(row.stat.name, row.stat.kind === "dir");
+  return { name: s.displayName, ext: s.ext };
+}
+
+interface BriefRowProps {
+  row: Row;
+  display: DisplayParts;
+  isCursor: boolean;
+  focused: boolean;
+  isMarked: boolean;
+  onPress: () => void;
+  onDoublePress: () => void;
+  onContextMenu?: () => void;
+}
+
+function BriefRow({
+  row,
+  display,
+  isCursor,
+  focused,
+  isMarked,
+  onPress,
+  onDoublePress,
+  onContextMenu,
+}: BriefRowProps): JSX.Element {
+  const isParent = row.kind === "parent";
+  const isDir = isParent || (row.kind === "entry" && row.stat.kind === "dir");
+  const hidden = row.kind === "entry" && row.stat.hidden === true;
+  const { bg, text } = rowColors({ isCursor, focused, marked: isMarked, hidden });
+
+  const lastTap = useRef(0);
+  const handlePress = (): void => {
+    const now = Date.now();
+    if (now - lastTap.current < 300) onDoublePress();
+    else onPress();
+    lastTap.current = now;
+  };
+
+  // RN-Web passes onContextMenu through to the underlying div, but RN's types
+  // don't expose it on Pressable — cast to spread. Also make the row
+  // non-focusable so clicking it doesn't shift keyboard focus.
+  const webExtras = {
+    tabIndex: -1,
+    onMouseDown: (e: { preventDefault(): void }) => e.preventDefault(),
+    onContextMenu: (e: { preventDefault(): void }) => {
+      e.preventDefault();
+      onContextMenu?.();
+    },
+  } as unknown as object;
+
+  const rowTestId = isParent ? "bc-row-parent" : `bc-row-${row.kind === "entry" ? row.stat.name : ""}`;
+  return (
+    <Pressable
+      onPress={handlePress}
+      {...webExtras}
+      style={[styles.row, { backgroundColor: bg, height: ROW_HEIGHT }]}
+      testID={rowTestId}
+    >
+      <View style={styles.iconCell}>
+        <RowIcon row={row} size={12} color={text} />
+      </View>
+      <Text
+        style={[styles.cell, styles.nameCell, { color: text }, isDir && styles.dirText]}
+        numberOfLines={1}
+      >
+        {display.name}
+      </Text>
+      {display.ext ? (
+        <Text style={[styles.cell, styles.extCell, { color: text }]} numberOfLines={1}>
+          {display.ext}
+        </Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
+export const briefView: FileListView = {
+  id: "brief",
+  label: "Brief",
+  Component: BriefBody,
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    overflow: "hidden",
+    minHeight: 0,
+  },
+  scrollOuter: {
+    flex: 1,
+  },
+  scrollContent: { flexDirection: "row" },
+  column: { flexDirection: "column" },
+  row: {
+    flexDirection: "row",
+    paddingHorizontal: 4,
+    alignItems: "center",
+    // RN-Web-only props; ignored on native.
+    cursor: "default",
+    outlineStyle: "none",
+  } as object,
+  iconCell: { width: 14, alignItems: "center", justifyContent: "center", marginRight: 2 },
+  cell: {
+    fontFamily: tcTheme.font.ui,
+    fontSize: tcTheme.font.size,
+  },
+  nameCell: {
+    flex: 1,
+    minWidth: 0,
+  },
+  extCell: {
+    marginLeft: NAME_EXT_GAP,
+    textAlign: "right",
+    color: tcTheme.color.textDim,
+  },
+  dirText: { fontWeight: "500" },
+  status: {
+    color: tcTheme.color.textDim,
+    fontFamily: tcTheme.font.ui,
+    fontSize: tcTheme.font.size,
+    padding: 6,
+  },
+});

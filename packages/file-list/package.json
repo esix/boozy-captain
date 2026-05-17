@@ -1,5 +1,5 @@
 {
-  "name": "@bc/ui-rn",
+  "name": "@bc/file-list",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,8 +14,6 @@
     "test": "echo \"(no tests)\""
   },
   "dependencies": {
-    "@bc/core": "workspace:*",
-    "@bc/file-list": "workspace:*",
     "@bc/theme": "workspace:*",
     "@bc/vfs": "workspace:*",
     "lucide-react": "^1.16.0"

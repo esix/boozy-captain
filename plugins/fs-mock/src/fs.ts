@@ -42,7 +42,15 @@ function toStat(name: string, node: MockNode, uri: Uri): Stat {
   if (node.kind === "dir") {
     return { name, uri, kind: "dir", size: 0, mtime: Date.now() };
   }
-  return { name, uri, kind: "file", size: node.size, mtime: node.mtime };
+  return {
+    name,
+    uri,
+    kind: "file",
+    size: node.size,
+    mtime: node.mtime,
+    hidden: node.hidden,
+    exec: node.exec,
+  };
 }
 
 function sleep(ms: number): Promise<void> {

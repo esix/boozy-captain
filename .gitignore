@@ -34,6 +34,12 @@ yarn-error.*
 .idea/
 .vscode/
 
+# Visual reference (locally extracted, proprietary — don't redistribute)
+tools/visual/tc-icons/
+tools/visual/sheets/
+tools/visual/shots/
+tools/visual/*.png
+
 # Native (kept from original)
 *.orig.*
 *.jks

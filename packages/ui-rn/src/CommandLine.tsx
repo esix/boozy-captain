@@ -28,11 +28,12 @@ export function CommandLine({ prompt, onSubmit }: CommandLineProps): JSX.Element
   };
 
   return (
-    <View style={styles.row}>
-      <Text style={styles.prompt} numberOfLines={1}>
+    <View style={styles.row} testID="bc-cmdline">
+      <Text style={styles.prompt} numberOfLines={1} testID="bc-cmdline-prompt">
         {prompt}{">"}
       </Text>
       <TextInput
+        testID="bc-cmdline-input"
         style={styles.input}
         value={value}
         onChangeText={(t: string) => {

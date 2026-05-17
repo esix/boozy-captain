@@ -23,15 +23,22 @@ export const DEFAULT_FKEY_ACTIONS: readonly FKeyAction[] = [
   { key: "Alt+F4", label: "Exit" },
 ];
 
+const nonFocusable = {
+  tabIndex: -1,
+  onMouseDown: (e: { preventDefault(): void }) => e.preventDefault(),
+} as unknown as object;
+
 export function FKeyBar({ actions = DEFAULT_FKEY_ACTIONS }: FKeyBarProps): JSX.Element {
   return (
-    <View style={styles.bar}>
+    <View style={styles.bar} testID="bc-fkeybar">
       {actions.map((a) => (
         <Pressable
           key={a.key}
           onPress={a.onPress}
           disabled={a.disabled}
           style={[styles.button, a.disabled ? styles.buttonDisabled : null]}
+          testID={`bc-fkey-${a.key.replace(/\+/g, "-").toLowerCase()}`}
+          {...nonFocusable}
         >
           <Text style={styles.keyText}>{a.key}</Text>
           <Text style={styles.labelText}> {a.label}</Text>

@@ -1,5 +1,5 @@
 {
-  "name": "@bc/surfaces-web",
+  "name": "@bc/theme",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,18 +13,7 @@
     "lint": "echo \"(lint not configured yet)\"",
     "test": "echo \"(no tests)\""
   },
-  "dependencies": {
-    "@bc/surfaces": "workspace:*",
-    "@bc/theme": "workspace:*"
-  },
-  "peerDependencies": {
-    "react": "^18.3.0",
-    "react-native": "^0.76.0"
-  },
   "devDependencies": {
-    "@types/react": "^18.3.12",
-    "react": "^18.3.1",
-    "react-native": "^0.76.0",
     "typescript": "^5.6.3"
   }
 }

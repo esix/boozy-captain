@@ -1,12 +1,13 @@
 {
-  "name": "@bc/ui-rn",
+  "name": "@bc/icons-tc-local",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -15,19 +16,15 @@
   },
   "dependencies": {
     "@bc/core": "workspace:*",
-    "@bc/file-list": "workspace:*",
-    "@bc/theme": "workspace:*",
-    "@bc/vfs": "workspace:*",
-    "lucide-react": "^1.16.0"
-  },
-  "peerDependencies": {
-    "react": "^18.3.0",
-    "react-native": "^0.76.0"
+    "@bc/plugin-host": "workspace:*"
   },
   "devDependencies": {
-    "@types/react": "^18.3.12",
-    "react": "^18.3.1",
-    "react-native": "^0.76.0",
     "typescript": "^5.6.3"
+  },
+  "bc": {
+    "capabilities": [],
+    "requires": [
+      "fs.read"
+    ]
   }
 }

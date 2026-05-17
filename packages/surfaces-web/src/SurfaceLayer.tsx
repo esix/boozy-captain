@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { SurfaceEntry } from "@bc/surfaces";
-import { tcTheme } from "@bc/ui-rn";
+import { tcTheme } from "@bc/theme";
 import type { WebSurfaceManager } from "./WebSurfaceManager.js";
 
 export interface SurfaceLayerProps {

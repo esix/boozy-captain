@@ -4,16 +4,22 @@ import { CommandRegistry, type HotkeyMap } from "@bc/core";
 import type { SurfaceHandle, SurfaceManager } from "@bc/surfaces";
 import { SurfaceLayer, WebSurfaceManager } from "@bc/surfaces-web";
 import {
+  ButtonBar,
   CommandLine,
   DEFAULT_FKEY_ACTIONS,
+  DEFAULT_MENUS,
   FKeyBar,
+  MenuBar,
   Panel,
+  StatusBar,
   TwoPanelLayout,
   tcTheme,
   useGlobalHotkeys,
   type FKeyAction,
   type PanelSelection,
+  type TabSpec,
 } from "@bc/ui-rn";
+import { formatSize } from "@bc/file-list";
 import type { Uri, VfsRegistry } from "@bc/vfs";
 
 export interface AppProps {
@@ -22,6 +28,11 @@ export interface AppProps {
 }
 
 type PanelIndex = 0 | 1;
+
+interface PanelTabState {
+  tabs: TabSpec[];
+  activeId: string;
+}
 
 const FKEY_COMMANDS: Record<string, string> = {
   F3: "fkey.view",
@@ -33,10 +44,30 @@ const FKEY_COMMANDS: Record<string, string> = {
   "Alt+F4": "fkey.exit",
 };
 
+const INITIAL_LEFT_TABS: PanelTabState = {
+  activeId: "L1",
+  tabs: [
+    { id: "L1", uri: "mock:///" },
+    { id: "L2", uri: "mock:///home/user/projects" },
+    { id: "L3", uri: "mock:///etc" },
+  ],
+};
+const INITIAL_RIGHT_TABS: PanelTabState = {
+  activeId: "R1",
+  tabs: [
+    { id: "R1", uri: "mock:///home/user" },
+    { id: "R2", uri: "mock:///home/user/photos" },
+    { id: "R3", uri: "mock:///var/log" },
+  ],
+};
+
 export function App({ vfs, surfaces }: AppProps): JSX.Element {
-  const [leftUri, setLeftUri] = useState<Uri>("mock:///");
-  const [rightUri, setRightUri] = useState<Uri>("mock:///home/user");
+  const [leftTabs, setLeftTabs] = useState<PanelTabState>(INITIAL_LEFT_TABS);
+  const [rightTabs, setRightTabs] = useState<PanelTabState>(INITIAL_RIGHT_TABS);
   const [activeIndex, setActiveIndex] = useState<PanelIndex>(0);
+
+  const leftUri = activeTabUri(leftTabs);
+  const rightUri = activeTabUri(rightTabs);
 
   const leftSel = useRef<PanelSelection | null>(null);
   const rightSel = useRef<PanelSelection | null>(null);
@@ -50,7 +81,6 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
     () => buildFkeyRegistry(surfaces, activeSelection, activeIndex),
     [surfaces, activeSelection, activeIndex],
   );
-
   const fkeyMap: HotkeyMap = useMemo(() => FKEY_COMMANDS, []);
   useGlobalHotkeys({ map: fkeyMap, registry: fkeyRegistry });
 
@@ -80,35 +110,96 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
   });
 
   const activeUri = activeIndex === 0 ? leftUri : rightUri;
+  const activeSel = activeIndex === 0 ? leftSel.current : rightSel.current;
+
+  const statusText = useMemo(() => buildStatusText(activeSel), [activeSel]);
+
+  // Per-panel mutators for tabs and current URI
+  const setSideUri = (side: PanelIndex, next: Uri): void => {
+    const setter = side === 0 ? setLeftTabs : setRightTabs;
+    setter((prev) => ({
+      ...prev,
+      tabs: prev.tabs.map((t) => (t.id === prev.activeId ? { ...t, uri: next } : t)),
+    }));
+  };
+  const activateTab = (side: PanelIndex, id: string): void => {
+    const setter = side === 0 ? setLeftTabs : setRightTabs;
+    setter((prev) => ({ ...prev, activeId: id }));
+    setActiveIndex(side);
+  };
+  const closeTab = (side: PanelIndex, id: string): void => {
+    const setter = side === 0 ? setLeftTabs : setRightTabs;
+    setter((prev) => {
+      if (prev.tabs.length <= 1) return prev;
+      const idx = prev.tabs.findIndex((t) => t.id === id);
+      const next = prev.tabs.filter((t) => t.id !== id);
+      const newActive =
+        prev.activeId === id ? next[Math.max(0, idx - 1)]!.id : prev.activeId;
+      return { tabs: next, activeId: newActive };
+    });
+  };
+  const newTab = (side: PanelIndex): void => {
+    const setter = side === 0 ? setLeftTabs : setRightTabs;
+    setter((prev) => {
+      const id = `${side === 0 ? "L" : "R"}${Date.now()}`;
+      const currentUri = prev.tabs.find((t) => t.id === prev.activeId)?.uri ?? "mock:///";
+      return { tabs: [...prev.tabs, { id, uri: currentUri }], activeId: id };
+    });
+    setActiveIndex(side);
+  };
 
   return (
     <View style={styles.root}>
+      <MenuBar
+        menus={DEFAULT_MENUS}
+        onSelect={(menu, item) => console.log(`[menu] ${menu}.${item}`)}
+      />
+      <ButtonBar onPress={(id) => console.log(`[toolbar] ${id}`)} />
       <TwoPanelLayout
         left={
           <Panel
+            testID="bc-panel-left"
             vfs={vfs}
             uri={leftUri}
-            onNavigate={setLeftUri}
+            onNavigate={(u) => setSideUri(0, u)}
             focused={activeIndex === 0}
             onFocus={() => setActiveIndex(0)}
             onSelectionChange={(sel) => {
               leftSel.current = sel;
             }}
+            driveInfo="[Local Disk]   mock filesystem"
+            tabs={{
+              items: leftTabs.tabs,
+              activeId: leftTabs.activeId,
+              onActivate: (id) => activateTab(0, id),
+              onClose: (id) => closeTab(0, id),
+              onNew: () => newTab(0),
+            }}
           />
         }
         right={
           <Panel
+            testID="bc-panel-right"
             vfs={vfs}
             uri={rightUri}
-            onNavigate={setRightUri}
+            onNavigate={(u) => setSideUri(1, u)}
             focused={activeIndex === 1}
             onFocus={() => setActiveIndex(1)}
             onSelectionChange={(sel) => {
               rightSel.current = sel;
             }}
+            driveInfo="[Local Disk]   mock filesystem"
+            tabs={{
+              items: rightTabs.tabs,
+              activeId: rightTabs.activeId,
+              onActivate: (id) => activateTab(1, id),
+              onClose: (id) => closeTab(1, id),
+              onNew: () => newTab(1),
+            }}
           />
         }
       />
+      <StatusBar text={statusText} />
       <CommandLine
         prompt={activeUri}
         onSubmit={(cmd) => {
@@ -119,6 +210,19 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
       <SurfaceLayer manager={surfaces} />
     </View>
   );
+}
+
+function activeTabUri(state: PanelTabState): Uri {
+  return state.tabs.find((t) => t.id === state.activeId)?.uri ?? "mock:///";
+}
+
+function buildStatusText(sel: PanelSelection | null): string {
+  if (!sel) return "";
+  const totalSize = sel.entries.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0);
+  const markedSize = sel.marked.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0);
+  const dirs = sel.entries.filter((e) => e.kind === "dir").length;
+  const files = sel.entries.length - dirs;
+  return `${formatSize(markedSize)} / ${formatSize(totalSize)} in ${sel.marked.length} / ${files} file(s), ${dirs} dir(s)`;
 }
 
 function buildFkeyRegistry(
@@ -145,9 +249,7 @@ function buildFkeyRegistry(
   r.register({
     id: "fkey.edit",
     title: "Edit",
-    run: () => {
-      console.log(`[F4 Edit] panel=${activeIndex} cursor=${activeSelection()?.cursorItem?.uri ?? "-"}`);
-    },
+    run: () => console.log(`[F4 Edit] panel=${activeIndex}`),
   });
   r.register({
     id: "fkey.copy",
@@ -158,7 +260,7 @@ function buildFkeyRegistry(
         ({ handle }: { handle: SurfaceHandle }) => (
           <PlaceholderBody
             title="Copy (stub)"
-            text={`Would copy ${sel?.marked.length ?? 0} marked file(s) and the cursor row.\nCancel? Or "Run in background"? Will be wired to a real CopyProcess in a later slice.`}
+            text={`Would copy ${sel?.marked.length ?? 0} marked file(s) and the cursor row.\nA later slice wires this to a real CopyProcess.`}
             onClose={handle.close}
           />
         ),
@@ -166,26 +268,10 @@ function buildFkeyRegistry(
       );
     },
   });
-  r.register({
-    id: "fkey.move",
-    title: "Move",
-    run: () => console.log(`[F6 Move]`),
-  });
-  r.register({
-    id: "fkey.mkdir",
-    title: "NewFolder",
-    run: () => console.log(`[F7 NewFolder]`),
-  });
-  r.register({
-    id: "fkey.delete",
-    title: "Delete",
-    run: () => console.log(`[F8 Delete]`),
-  });
-  r.register({
-    id: "fkey.exit",
-    title: "Exit",
-    run: () => console.log(`[Alt+F4 Exit]`),
-  });
+  r.register({ id: "fkey.move", title: "Move", run: () => console.log(`[F6 Move]`) });
+  r.register({ id: "fkey.mkdir", title: "NewFolder", run: () => console.log(`[F7 NewFolder]`) });
+  r.register({ id: "fkey.delete", title: "Delete", run: () => console.log(`[F8 Delete]`) });
+  r.register({ id: "fkey.exit", title: "Exit", run: () => console.log(`[Alt+F4 Exit]`) });
   return r;
 }
 

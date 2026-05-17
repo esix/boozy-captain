@@ -1045,6 +1045,7 @@ __metadata:
   resolution: "@bc/app-web-static@workspace:apps/web-static"
   dependencies:
     "@bc/core": "workspace:*"
+    "@bc/file-list": "workspace:*"
     "@bc/fs-mock": "workspace:*"
     "@bc/plugin-host": "workspace:*"
     "@bc/surfaces": "workspace:*"
@@ -1071,6 +1072,23 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@bc/file-list@workspace:*, @bc/file-list@workspace:packages/file-list":
+  version: 0.0.0-use.local
+  resolution: "@bc/file-list@workspace:packages/file-list"
+  dependencies:
+    "@bc/theme": "workspace:*"
+    "@bc/vfs": "workspace:*"
+    "@types/react": "npm:^18.3.12"
+    lucide-react: "npm:^1.16.0"
+    react: "npm:^18.3.1"
+    react-native: "npm:^0.76.0"
+    typescript: "npm:^5.6.3"
+  peerDependencies:
+    react: ^18.3.0
+    react-native: ^0.76.0
+  languageName: unknown
+  linkType: soft
+
 "@bc/fs-mock@workspace:*, @bc/fs-mock@workspace:plugins/fs-mock":
   version: 0.0.0-use.local
   resolution: "@bc/fs-mock@workspace:plugins/fs-mock"
@@ -1080,6 +1098,16 @@ __metadata:
     "@bc/vfs": "workspace:*"
     typescript: "npm:^5.6.3"
     vitest: "npm:^2.1.5"
+  languageName: unknown
+  linkType: soft
+
+"@bc/icons-tc-local@workspace:plugins/icons-tc-local":
+  version: 0.0.0-use.local
+  resolution: "@bc/icons-tc-local@workspace:plugins/icons-tc-local"
+  dependencies:
+    "@bc/core": "workspace:*"
+    "@bc/plugin-host": "workspace:*"
+    typescript: "npm:^5.6.3"
   languageName: unknown
   linkType: soft
 
@@ -1100,7 +1128,7 @@ __metadata:
   resolution: "@bc/surfaces-web@workspace:packages/surfaces-web"
   dependencies:
     "@bc/surfaces": "workspace:*"
-    "@bc/ui-rn": "workspace:*"
+    "@bc/theme": "workspace:*"
     "@types/react": "npm:^18.3.12"
     react: "npm:^18.3.1"
     react-native: "npm:^0.76.0"
@@ -1123,13 +1151,24 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@bc/theme@workspace:*, @bc/theme@workspace:packages/theme":
+  version: 0.0.0-use.local
+  resolution: "@bc/theme@workspace:packages/theme"
+  dependencies:
+    typescript: "npm:^5.6.3"
+  languageName: unknown
+  linkType: soft
+
 "@bc/ui-rn@workspace:*, @bc/ui-rn@workspace:packages/ui-rn":
   version: 0.0.0-use.local
   resolution: "@bc/ui-rn@workspace:packages/ui-rn"
   dependencies:
     "@bc/core": "workspace:*"
+    "@bc/file-list": "workspace:*"
+    "@bc/theme": "workspace:*"
     "@bc/vfs": "workspace:*"
     "@types/react": "npm:^18.3.12"
+    lucide-react: "npm:^1.16.0"
     react: "npm:^18.3.1"
     react-native: "npm:^0.76.0"
     typescript: "npm:^5.6.3"
@@ -1477,6 +1516,129 @@ __metadata:
     "@jridgewell/resolve-uri": "npm:^3.1.0"
     "@jridgewell/sourcemap-codec": "npm:^1.4.14"
   checksum: 10c0/4b30ec8cd56c5fd9a661f088230af01e0c1a3888d11ffb6b47639700f71225be21d1f7e168048d6d4f9449207b978a235c07c8f15c07705685d16dc06280e9d9
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-android-arm64@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-android-arm64@npm:1.0.0"
+  conditions: os=android & cpu=arm64
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-darwin-arm64@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-darwin-arm64@npm:1.0.0"
+  conditions: os=darwin & cpu=arm64
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-darwin-x64@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-darwin-x64@npm:1.0.0"
+  conditions: os=darwin & cpu=x64
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-linux-arm-gnueabihf@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-linux-arm-gnueabihf@npm:1.0.0"
+  conditions: os=linux & cpu=arm
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-linux-arm64-gnu@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-linux-arm64-gnu@npm:1.0.0"
+  conditions: os=linux & cpu=arm64 & libc=glibc
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-linux-arm64-musl@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-linux-arm64-musl@npm:1.0.0"
+  conditions: os=linux & cpu=arm64 & libc=musl
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-linux-riscv64-gnu@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-linux-riscv64-gnu@npm:1.0.0"
+  conditions: os=linux & cpu=riscv64 & libc=glibc
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-linux-x64-gnu@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-linux-x64-gnu@npm:1.0.0"
+  conditions: os=linux & cpu=x64 & libc=glibc
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-linux-x64-musl@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-linux-x64-musl@npm:1.0.0"
+  conditions: os=linux & cpu=x64 & libc=musl
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-win32-arm64-msvc@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-win32-arm64-msvc@npm:1.0.0"
+  conditions: os=win32 & cpu=arm64
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas-win32-x64-msvc@npm:1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas-win32-x64-msvc@npm:1.0.0"
+  conditions: os=win32 & cpu=x64
+  languageName: node
+  linkType: hard
+
+"@napi-rs/canvas@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "@napi-rs/canvas@npm:1.0.0"
+  dependencies:
+    "@napi-rs/canvas-android-arm64": "npm:1.0.0"
+    "@napi-rs/canvas-darwin-arm64": "npm:1.0.0"
+    "@napi-rs/canvas-darwin-x64": "npm:1.0.0"
+    "@napi-rs/canvas-linux-arm-gnueabihf": "npm:1.0.0"
+    "@napi-rs/canvas-linux-arm64-gnu": "npm:1.0.0"
+    "@napi-rs/canvas-linux-arm64-musl": "npm:1.0.0"
+    "@napi-rs/canvas-linux-riscv64-gnu": "npm:1.0.0"
+    "@napi-rs/canvas-linux-x64-gnu": "npm:1.0.0"
+    "@napi-rs/canvas-linux-x64-musl": "npm:1.0.0"
+    "@napi-rs/canvas-win32-arm64-msvc": "npm:1.0.0"
+    "@napi-rs/canvas-win32-x64-msvc": "npm:1.0.0"
+  dependenciesMeta:
+    "@napi-rs/canvas-android-arm64":
+      optional: true
+    "@napi-rs/canvas-darwin-arm64":
+      optional: true
+    "@napi-rs/canvas-darwin-x64":
+      optional: true
+    "@napi-rs/canvas-linux-arm-gnueabihf":
+      optional: true
+    "@napi-rs/canvas-linux-arm64-gnu":
+      optional: true
+    "@napi-rs/canvas-linux-arm64-musl":
+      optional: true
+    "@napi-rs/canvas-linux-riscv64-gnu":
+      optional: true
+    "@napi-rs/canvas-linux-x64-gnu":
+      optional: true
+    "@napi-rs/canvas-linux-x64-musl":
+      optional: true
+    "@napi-rs/canvas-win32-arm64-msvc":
+      optional: true
+    "@napi-rs/canvas-win32-x64-msvc":
+      optional: true
+    canvas:
+      built: true
+    skia-canvas:
+      built: true
+  checksum: 10c0/ceead8f0039d6d093a09b1f0f2dcb6854ee49e79ff9830465ca3fffa585b698d63a3af69ae735f42de26845073cc03383cf89c2d431af1375198f82e003f54ec
   languageName: node
   linkType: hard
 
@@ -2473,6 +2635,8 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "boozy-captain@workspace:."
   dependencies:
+    "@napi-rs/canvas": "npm:^1.0.0"
+    playwright: "npm:^1.60.0"
     turbo: "npm:^2.3.0"
     typescript: "npm:^5.6.3"
   languageName: unknown
@@ -3229,12 +3393,31 @@ __metadata:
   languageName: node
   linkType: hard
 
+"fsevents@npm:2.3.2":
+  version: 2.3.2
+  resolution: "fsevents@npm:2.3.2"
+  dependencies:
+    node-gyp: "npm:latest"
+  checksum: 10c0/be78a3efa3e181cda3cf7a4637cb527bcebb0bd0ea0440105a3bb45b86f9245b307dc10a2507e8f4498a7d4ec349d1910f4d73e4d4495b16103106e07eee735b
+  conditions: os=darwin
+  languageName: node
+  linkType: hard
+
 "fsevents@npm:^2.3.2, fsevents@npm:~2.3.2, fsevents@npm:~2.3.3":
   version: 2.3.3
   resolution: "fsevents@npm:2.3.3"
   dependencies:
     node-gyp: "npm:latest"
   checksum: 10c0/a1f0c44595123ed717febbc478aa952e47adfc28e2092be66b8ab1635147254ca6cfe1df792a8997f22716d4cbafc73309899ff7bfac2ac3ad8cf2e4ecc3ec60
+  conditions: os=darwin
+  languageName: node
+  linkType: hard
+
+"fsevents@patch:fsevents@npm%3A2.3.2#optional!builtin<compat/fsevents>":
+  version: 2.3.2
+  resolution: "fsevents@patch:fsevents@npm%3A2.3.2#optional!builtin<compat/fsevents>::version=2.3.2&hash=df0bf1"
+  dependencies:
+    node-gyp: "npm:latest"
   conditions: os=darwin
   languageName: node
   linkType: hard
@@ -3844,6 +4027,15 @@ __metadata:
   dependencies:
     yallist: "npm:^3.0.2"
   checksum: 10c0/89b2ef2ef45f543011e38737b8a8622a2f8998cddf0e5437174ef8f1f70a8b9d14a918ab3e232cb3ba343b7abddffa667f0b59075b2b80e6b4d63c3de6127482
+  languageName: node
+  linkType: hard
+
+"lucide-react@npm:^1.16.0":
+  version: 1.16.0
+  resolution: "lucide-react@npm:1.16.0"
+  peerDependencies:
+    react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+  checksum: 10c0/d1c4b7f1abdc8b5c729a5bd74d875f0b0db732b2e8d0cc8c76f9e167818b81a6b246a64986ab2fc1ae74cf9f8d16ce2cefe98fe5a6420b31f4fd6742b3181d5a
   languageName: node
   linkType: hard
 
@@ -4559,6 +4751,30 @@ __metadata:
   dependencies:
     find-up: "npm:^3.0.0"
   checksum: 10c0/902a3d0c1f8ac43b1795fa1ba6ffeb37dfd53c91469e969790f6ed5e29ff2bdc50b63ba6115dc056d2efb4a040aa2446d512b3804bdafdf302f734fb3ec21847
+  languageName: node
+  linkType: hard
+
+"playwright-core@npm:1.60.0":
+  version: 1.60.0
+  resolution: "playwright-core@npm:1.60.0"
+  bin:
+    playwright-core: cli.js
+  checksum: 10c0/99ccd43923b6e9355e0723b7fe221e6326efd4687f8dafff951313662aea11db51f542a9c2122c704c445fb9baae1c9ec9fa6f895126bbddd9fe92313f6942c9
+  languageName: node
+  linkType: hard
+
+"playwright@npm:^1.60.0":
+  version: 1.60.0
+  resolution: "playwright@npm:1.60.0"
+  dependencies:
+    fsevents: "npm:2.3.2"
+    playwright-core: "npm:1.60.0"
+  dependenciesMeta:
+    fsevents:
+      optional: true
+  bin:
+    playwright: cli.js
+  checksum: 10c0/714ad76d85b4865d7e43c0012f9039800c1485373388973ed39d79339cee5ad467052d1e2f1eaeca107a1cb6e65342186a8578a4c3504853d84c3a691250d5db
   languageName: node
   linkType: hard
 

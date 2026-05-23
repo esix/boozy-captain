@@ -28,7 +28,9 @@ export interface FileListViewProps {
   focused: boolean;
   loading: boolean;
   sort: SortSpec;
-  onCursorMove: (index: number) => void;
+  /** Move cursor to the row with this URI. URI-based (not index-based) so it
+   *  survives concurrent list mutation while streaming. */
+  onCursorMove: (uri: Uri) => void;
   onActivate: (row: Row) => void;
   onChangeSort?: (sort: SortSpec) => void;
   /** Right-click / long-press: toggle mark on the row at `index`. */
@@ -39,6 +41,8 @@ export interface FileListViewProps {
    * views: 0 (no horizontal navigation).
    */
   onColumnStride?: (stride: number) => void;
+  /** Optional data-testid for the view's outer container. */
+  testID?: string;
 }
 
 export interface FileListView {

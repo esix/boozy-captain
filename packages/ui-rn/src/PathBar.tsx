@@ -7,6 +7,8 @@ export interface PathBarProps {
   uri: Uri;
   /** Current filter (e.g. "*.*"). Reserved — clicking the chip opens a stub. */
   filter?: string;
+  /** Active panel? Tints the bar background (TC classic blue). */
+  focused?: boolean;
   onNavigate?: (uri: Uri) => void;
   onChangeFilter?: (next: string) => void;
   testID?: string;
@@ -22,12 +24,12 @@ const nonFocusable = {
   onMouseDown: (e: { preventDefault(): void }) => e.preventDefault(),
 } as unknown as object;
 
-export function PathBar({ uri, filter = "*.*", onNavigate, onChangeFilter, testID = "bc-pathbar" }: PathBarProps): JSX.Element {
+export function PathBar({ uri, filter = "*.*", focused = false, onNavigate, onChangeFilter, testID = "bc-pathbar" }: PathBarProps): JSX.Element {
   const { scheme, path } = parseUri(uri);
   const segments = path.split("/").filter((s) => s.length > 0);
 
   return (
-    <View style={styles.row} testID={testID}>
+    <View style={[styles.row, focused ? styles.rowActive : styles.rowInactive]} testID={testID}>
       <Pressable style={styles.historyButton} testID={`${testID}-history`} {...nonFocusable}>
         <Text style={styles.historyText}>▼</Text>
       </Pressable>
@@ -61,12 +63,18 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: tcTheme.color.chromeBg,
     borderBottomWidth: 1,
     borderBottomColor: tcTheme.color.chromeBorder,
-    paddingHorizontal: 2,
-    paddingVertical: 1,
-    minHeight: 22,
+    paddingLeft: 2,
+    paddingRight: 0,
+    paddingVertical: 0,
+    height: 18,
+  },
+  rowActive: {
+    backgroundColor: "#99B4D1",
+  },
+  rowInactive: {
+    backgroundColor: "#BFCDDB",
   },
   historyButton: {
     paddingHorizontal: 4,
@@ -103,10 +111,11 @@ const styles = StyleSheet.create({
   filterChip: {
     flexDirection: "row",
     alignItems: "center",
+    alignSelf: "stretch",
     paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderWidth: 1,
-    borderColor: tcTheme.color.chromeBorder,
+    paddingVertical: 0,
+    borderLeftWidth: 1,
+    borderLeftColor: tcTheme.color.chromeBorder,
     backgroundColor: tcTheme.color.panelBg,
     marginLeft: 4,
   },

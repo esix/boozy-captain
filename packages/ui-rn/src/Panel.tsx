@@ -4,6 +4,8 @@ import { CommandRegistry } from "@bc/core";
 import {
   FileList,
   createDefaultRegistry,
+  formatAttr,
+  formatDate,
   formatSize,
   type FileListView,
   type FileListViewRegistry,
@@ -43,14 +45,16 @@ export interface PanelProps {
   onSelectionChange?: (sel: PanelSelection) => void;
   /** Optional registry; defaults to the built-in Brief + Full views. */
   viewRegistry?: FileListViewRegistry;
-  /** Initial view mode id; default "brief" (TC's user setting). */
-  initialViewId?: string;
+  /** Current view-mode id (controlled). Defaults to "brief" if not provided. */
+  viewId?: string;
   /** Optional tab strip above the panel. Hidden when undefined. */
   tabs?: PanelTabsProps;
   /** Optional free-space line shown in the DriveBar. */
   driveInfo?: string;
   /** Prefix for data-testid attributes on this panel and its children. */
   testID?: string;
+  /** Double-click on the panel's empty area triggers this (TC creates a new tab). */
+  onCreateTab?: () => void;
 }
 
 const PAGE_SIZE = 10;
@@ -63,50 +67,88 @@ export function Panel({
   onFocus,
   onSelectionChange,
   viewRegistry,
-  initialViewId = "brief",
+  viewId = "brief",
   tabs,
   driveInfo,
   testID = "bc-panel",
+  onCreateTab,
 }: PanelProps): JSX.Element {
   const registry = useMemo(() => viewRegistry ?? createDefaultRegistry(), [viewRegistry]);
-  const [viewId, setViewId] = useState<string>(initialViewId);
   const view: FileListView = registry.get(viewId) ?? registry.list()[0]!;
 
   const { entries, loading, error, reload } = useDirectoryStream(vfs, uri);
   // Cursor identity is a URI (so it follows the file when streaming sort
-  // reorders rows). Derived `cursor` index is recomputed each render.
-  const [cursorUri, setCursorUri] = useState<Uri | null>(null);
+  // reorders rows). Derived `cursor` index is recomputed each render and is
+  // -1 while the URI isn't present in `rows` (e.g. just navigated up and the
+  // parent listing is still streaming — show "no row highlighted" rather than
+  // flashing on [..] briefly).
+  const [cursorUri, setCursorUri] = useState<Uri | null>(() => parentUri(uri));
   const [marked, setMarked] = useState<Set<Uri>>(new Set());
   const [sort, setSort] = useState<SortSpec>({ key: "name", direction: "asc" });
   // Horizontal stride reported by the active view. 0 = no horizontal nav
   // (single-column view); >0 = move cursor by that many indices on Left/Right.
   const [columnStride, setColumnStride] = useState(0);
 
-  // Reset selection when uri changes; cursor lands on [..] (parent row).
+  // When uri changes, place the cursor sensibly:
+  //   - going UP (new uri is parent of previous uri) → cursor lands on the
+  //     directory we just left, so the user sees where they came from.
+  //   - any other change (down, tab switch, etc.) → cursor on [..].
+  const prevUriRef = useRef<Uri>(uri);
   useEffect(() => {
-    setCursorUri(parentUri(uri));
-    setMarked(new Set());
+    const prev = prevUriRef.current;
+    if (prev !== uri) {
+      if (uri === parentUri(prev)) {
+        setCursorUri(prev);
+      } else {
+        setCursorUri(parentUri(uri));
+      }
+      setMarked(new Set());
+    }
+    prevUriRef.current = uri;
   }, [uri]);
 
-  // Build rows: synthetic [..] always first, then directories (always
-  // alphabetical regardless of sort mode), then files sorted per `sort`.
+  // Build rows: synthetic [..] first (omitted at root), then directories
+  // (always alphabetical regardless of sort mode), then files sorted per `sort`.
   const rows = useMemo<Row[]>(() => {
-    const parent: Row = { kind: "parent", uri: parentUri(uri) };
+    const parent = parentUri(uri);
+    const atRoot = parent === uri;
     const dirs: Stat[] = [];
     const files: Stat[] = [];
     for (const e of entries) (e.kind === "dir" ? dirs : files).push(e);
     dirs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
     files.sort((a, b) => compareEntries(a, b, sort));
     const toRow = (stat: Stat): Row => ({ kind: "entry", stat });
-    return [parent, ...dirs.map(toRow), ...files.map(toRow)];
+    const body = [...dirs.map(toRow), ...files.map(toRow)];
+    return atRoot ? body : [{ kind: "parent", uri: parent } satisfies Row, ...body];
   }, [uri, entries, sort]);
 
-  // Derive cursor index from cursorUri + current rows. If the cursorUri
-  // doesn't appear (e.g. file removed), fall back to row 0 ([..]).
+  // When the stream finishes and the cursor still hasn't landed on any row
+  // (typically at root, where there's no [..] to fall back on), select the
+  // first row. Matches TC's behavior of always having one row highlighted.
+  //
+  // We gate on having actually observed `loading: true` for the current uri,
+  // because on uri-change React renders one cycle with the new uri but stale
+  // {loading: false, entries: previous-dir} — without the gate we'd briefly
+  // see the cursor as "unmatched" against stale rows and override the
+  // go-up cursor placement.
+  const loadingSeenForUriRef = useRef<Uri | null>(null);
+  useEffect(() => {
+    if (loading) {
+      loadingSeenForUriRef.current = uri;
+      return;
+    }
+    if (loadingSeenForUriRef.current !== uri) return;
+    if (rows.length === 0) return;
+    if (cursorUri !== null && rows.some((r) => uriOfRow(r) === cursorUri)) return;
+    setCursorUri(uriOfRow(rows[0]!));
+  }, [loading, rows, cursorUri, uri]);
+
+  // Derive cursor index from cursorUri + current rows. -1 means "no row
+  // highlighted" — happens when the chosen URI isn't yet present in rows
+  // (streaming, just-navigated-up, etc.). Views render no cursor highlight.
   const cursor = useMemo(() => {
-    if (cursorUri === null) return 0;
-    const idx = rows.findIndex((r) => uriOfRow(r) === cursorUri);
-    return idx >= 0 ? idx : 0;
+    if (cursorUri === null) return -1;
+    return rows.findIndex((r) => uriOfRow(r) === cursorUri);
   }, [cursorUri, rows]);
 
   // Index-based setter used by views: convert to URI and persist.
@@ -130,7 +172,10 @@ export function Panel({
     });
   }, [entries, cursor, cursorItem, marked, onSelectionChange]);
 
-  const summary = useMemo(() => computeSummary(entries, marked), [entries, marked]);
+  const footer = useMemo(
+    () => computeFooter(entries, marked, cursorRow),
+    [entries, marked, cursorRow],
+  );
 
   const navigate = useCallback(
     (next: Uri): void => {
@@ -152,21 +197,42 @@ export function Panel({
     [navigate, onFocus],
   );
 
-  const moveCursor = useCallback(
-    (delta: number): void => {
-      if (rows.length === 0) return;
-      setCursor(clamp(cursor + delta, 0, rows.length - 1));
-    },
-    [rows.length, cursor, setCursor],
-  );
+  // Cap the cursor-move rate. OS key auto-repeat fires ~30/sec which is too
+  // fast for comfortable visual tracking AND lets several events queue up
+  // between renders (resulting in the cursor "jumping" several rows at once
+  // when React batches them). Throttling to ~12/sec gives one move per
+  // render frame on practically any list size — smooth.
+  //
+  // First press is always immediate (the ref starts at 0, so the first call
+  // is always >MIN_MOVE_MS old). On key release, the ref doesn't reset, but
+  // next press will be > 80 ms later, so it goes through.
+  const lastMoveAtRef = useRef(0);
+  const MIN_MOVE_INTERVAL_MS = 80;
 
-  const moveCursorTo = useCallback(
-    (pos: "start" | "end"): void => {
-      if (rows.length === 0) return;
-      setCursor(pos === "start" ? 0 : rows.length - 1);
-    },
-    [rows.length, setCursor],
-  );
+  const moveCursor = useCallback((delta: number): void => {
+    const now =
+      typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    if (now - lastMoveAtRef.current < MIN_MOVE_INTERVAL_MS) return;
+    lastMoveAtRef.current = now;
+    setCursorUri((prevUri) => {
+      const rowsNow = rowsRef.current;
+      if (rowsNow.length === 0) return prevUri;
+      let curIdx = -1;
+      if (prevUri !== null) curIdx = rowsNow.findIndex((r) => uriOfRow(r) === prevUri);
+      if (curIdx < 0) curIdx = 0;
+      const newIdx = clamp(curIdx + delta, 0, rowsNow.length - 1);
+      return uriOfRow(rowsNow[newIdx]!);
+    });
+  }, []);
+
+  const moveCursorTo = useCallback((pos: "start" | "end"): void => {
+    setCursorUri(() => {
+      const rowsNow = rowsRef.current;
+      if (rowsNow.length === 0) return null;
+      const idx = pos === "start" ? 0 : rowsNow.length - 1;
+      return uriOfRow(rowsNow[idx]!);
+    });
+  }, []);
 
   const toggleMarkAt = useCallback(
     (idx: number): void => {
@@ -309,6 +375,235 @@ export function Panel({
 
   const markedUriSet = useMemo(() => new Set(marked), [marked]);
 
+  // ─── TC-style right-button drag selection ────────────────────────────────
+  // Mousedown right-button on a row sets the drag mode based on that row's
+  // current mark (selected → "unselect"; unselected → "select"). Mousemove
+  // applies the same mode to every row under the cursor; already-matching
+  // rows are left alone (idempotent). Mouseup ends the drag.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const markedRef = useRef(marked);
+  markedRef.current = marked;
+  // Drag-select state: anchor (mousedown row), range = cumulative [lo, hi]
+  // touched so far, mode determined at anchor (toggle direction).
+  const dragSelectRef = useRef<{
+    anchor: number;
+    range: { lo: number; hi: number };
+    mode: "select" | "unselect";
+  } | null>(null);
+  const lastMouseRef = useRef<{ x: number; y: number } | null>(null);
+  const autoScrollRafRef = useRef<number | null>(null);
+  const cachedScrollerRef = useRef<HTMLElement | null>(null);
+
+  const findRowIndex = useCallback(
+    (target: EventTarget | null): number => {
+      if (!(target instanceof HTMLElement)) return -1;
+      // Scope to this panel — drag started in panel A shouldn't mark panel B.
+      const panelEl = target.closest(`[data-testid="${testID}"]`);
+      if (!panelEl) return -1;
+      const rowEl = target.closest("[data-row-index]") as HTMLElement | null;
+      if (!rowEl) return -1;
+      const n = parseInt(rowEl.dataset.rowIndex ?? "", 10);
+      return Number.isFinite(n) ? n : -1;
+    },
+    [testID],
+  );
+
+  // Find the scrollable element inside the panel (BriefView's ScrollView or
+  // FullView's FlatList). Cached per drag.
+  const findScroller = useCallback((): HTMLElement | null => {
+    if (cachedScrollerRef.current && document.contains(cachedScrollerRef.current)) {
+      return cachedScrollerRef.current;
+    }
+    const panelEl = document.querySelector(`[data-testid="${testID}"]`);
+    if (!(panelEl instanceof HTMLElement)) return null;
+    for (const el of Array.from(panelEl.querySelectorAll<HTMLElement>("*"))) {
+      const cs = window.getComputedStyle(el);
+      const overflowX = cs.overflowX;
+      const overflowY = cs.overflowY;
+      const hasOverflowX = (overflowX === "auto" || overflowX === "scroll") && el.scrollWidth > el.clientWidth;
+      const hasOverflowY = (overflowY === "auto" || overflowY === "scroll") && el.scrollHeight > el.clientHeight;
+      if (hasOverflowX || hasOverflowY) {
+        cachedScrollerRef.current = el;
+        return el;
+      }
+    }
+    return null;
+  }, [testID]);
+
+  // Apply mode to every entry row in [lo, hi] inclusive. Idempotent — rows
+  // already in the target state are skipped.
+  const applyRange = useCallback(
+    (lo: number, hi: number, mode: "select" | "unselect") => {
+      if (hi < lo) return;
+      setMarked((prev) => {
+        const next = new Set(prev);
+        let changed = false;
+        for (let i = lo; i <= hi; i++) {
+          const row = rowsRef.current[i];
+          if (!row || row.kind === "parent") continue;
+          const uriOfThis = row.stat.uri;
+          if (mode === "select") {
+            if (!next.has(uriOfThis)) {
+              next.add(uriOfThis);
+              changed = true;
+            }
+          } else {
+            if (next.has(uriOfThis)) {
+              next.delete(uriOfThis);
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : prev;
+      });
+    },
+    [],
+  );
+
+  // Extend the active drag's cumulative range to include `idx`. Applies the
+  // mode to only the newly-covered rows (the existing range stays as-is, so
+  // already-applied rows aren't re-touched).
+  const extendRangeTo = useCallback(
+    (idx: number) => {
+      const d = dragSelectRef.current;
+      if (!d) return;
+      const newLo = Math.min(d.range.lo, idx);
+      const newHi = Math.max(d.range.hi, idx);
+      if (newLo === d.range.lo && newHi === d.range.hi) return;
+      if (newLo < d.range.lo) applyRange(newLo, d.range.lo - 1, d.mode);
+      if (newHi > d.range.hi) applyRange(d.range.hi + 1, newHi, d.mode);
+      d.range = { lo: newLo, hi: newHi };
+    },
+    [applyRange],
+  );
+
+  useEffect(() => {
+    const EDGE = 30;
+    const SPEED = 8;
+
+    const stopAutoScroll = (): void => {
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
+    };
+
+    // Compute scroll delta from last mouse position relative to panel rect.
+    const computeDelta = (
+      rect: DOMRect,
+    ): { dx: number; dy: number } => {
+      const pos = lastMouseRef.current;
+      if (!pos) return { dx: 0, dy: 0 };
+      let dx = 0;
+      let dy = 0;
+      if (pos.x < rect.left + EDGE) dx = -SPEED - Math.max(0, rect.left - pos.x);
+      else if (pos.x > rect.right - EDGE) dx = SPEED + Math.max(0, pos.x - rect.right);
+      if (pos.y < rect.top + EDGE) dy = -SPEED - Math.max(0, rect.top - pos.y);
+      else if (pos.y > rect.bottom - EDGE) dy = SPEED + Math.max(0, pos.y - rect.bottom);
+      return { dx, dy };
+    };
+
+    const tick = (): void => {
+      if (!dragSelectRef.current || !lastMouseRef.current) {
+        autoScrollRafRef.current = null;
+        return;
+      }
+      const panelEl = document.querySelector(`[data-testid="${testID}"]`);
+      if (!(panelEl instanceof HTMLElement)) {
+        autoScrollRafRef.current = null;
+        return;
+      }
+      const rect = panelEl.getBoundingClientRect();
+      const { dx, dy } = computeDelta(rect);
+      if (dx === 0 && dy === 0) {
+        autoScrollRafRef.current = null;
+        return;
+      }
+      const scroller = findScroller();
+      if (scroller) scroller.scrollBy(dx, dy);
+
+      // After scrolling, the row under the cursor likely changed. Look it up
+      // (clamped to inside the panel so an out-of-bounds mouse still resolves
+      // to a real row near the edge).
+      const pos = lastMouseRef.current;
+      const cx = Math.max(rect.left + 2, Math.min(rect.right - 2, pos.x));
+      const cy = Math.max(rect.top + 2, Math.min(rect.bottom - 2, pos.y));
+      const el = document.elementFromPoint(cx, cy);
+      const idx = findRowIndex(el);
+      if (idx >= 0) {
+        setCursor(idx);
+        extendRangeTo(idx);
+      }
+      autoScrollRafRef.current = requestAnimationFrame(tick);
+    };
+
+    const maybeStartAutoScroll = (): void => {
+      if (autoScrollRafRef.current !== null) return;
+      autoScrollRafRef.current = requestAnimationFrame(tick);
+    };
+
+    const onMouseDown = (e: MouseEvent): void => {
+      if (e.button !== 2) return;
+      const idx = findRowIndex(e.target);
+      if (idx < 0) return;
+      const row = rowsRef.current[idx];
+      if (!row || row.kind === "parent") return;
+      e.preventDefault();
+      onFocus?.();
+      setCursor(idx);
+      const mode: "select" | "unselect" = markedRef.current.has(row.stat.uri)
+        ? "unselect"
+        : "select";
+      dragSelectRef.current = { anchor: idx, range: { lo: idx, hi: idx }, mode };
+      cachedScrollerRef.current = null; // re-find scroller per drag
+      lastMouseRef.current = { x: e.clientX, y: e.clientY };
+      applyRange(idx, idx, mode);
+    };
+    const onMouseMove = (e: MouseEvent): void => {
+      if (!dragSelectRef.current) return;
+      lastMouseRef.current = { x: e.clientX, y: e.clientY };
+      const idx = findRowIndex(e.target);
+      if (idx >= 0) {
+        setCursor(idx);
+        extendRangeTo(idx);
+      }
+      // Edge → kick off auto-scroll if not already running.
+      const panelEl = document.querySelector(`[data-testid="${testID}"]`);
+      if (panelEl instanceof HTMLElement) {
+        const rect = panelEl.getBoundingClientRect();
+        const nearEdge =
+          e.clientX < rect.left + EDGE ||
+          e.clientX > rect.right - EDGE ||
+          e.clientY < rect.top + EDGE ||
+          e.clientY > rect.bottom - EDGE;
+        if (nearEdge) maybeStartAutoScroll();
+      }
+    };
+    const onMouseUp = (e: MouseEvent): void => {
+      if (e.button === 2) {
+        dragSelectRef.current = null;
+        stopAutoScroll();
+      }
+    };
+    const onContextMenu = (e: MouseEvent): void => {
+      // Suppress the browser context menu inside rows (we use right-click for
+      // mark / drag-select).
+      if (findRowIndex(e.target) >= 0) e.preventDefault();
+    };
+    document.addEventListener("mousedown", onMouseDown, true);
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp, true);
+    document.addEventListener("contextmenu", onContextMenu, true);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown, true);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp, true);
+      document.removeEventListener("contextmenu", onContextMenu, true);
+      stopAutoScroll();
+    };
+  }, [findRowIndex, applyRange, extendRangeTo, setCursor, onFocus, findScroller, testID]);
+
   // RN-Web's Pressable defaults to tabIndex=0 (role=button) — making it a
   // focus target so Space/Enter pressed afterwards activate the Pressable
   // instead of reaching the panel's keyboard handler. Take it out of the
@@ -318,6 +613,11 @@ export function Panel({
     onMouseDown: (e: { preventDefault(): void }) => e.preventDefault(),
   } as unknown as object;
 
+  // Note: new-tab on double-click lives inside the TabBar's empty area now,
+  // not on the whole panel (that was firing on every double-click inside the
+  // panel, e.g. the view switcher).
+  void onCreateTab;
+
   return (
     <Pressable
       onPress={onFocus}
@@ -326,7 +626,7 @@ export function Panel({
       testID={testID}
     >
       <DriveBar uri={uri} info={driveInfo} onNavigate={navigate} testID={`${testID}-drivebar`} />
-      {tabs ? (
+      {tabs && tabs.items.length > 1 ? (
         <TabBar
           tabs={tabs.items}
           activeId={tabs.activeId}
@@ -336,24 +636,7 @@ export function Panel({
           testID={`${testID}-tabbar`}
         />
       ) : null}
-      <PathBar uri={uri} onNavigate={navigate} testID={`${testID}-pathbar`} />
-      <View style={styles.viewSwitcher} testID={`${testID}-viewswitcher`}>
-        {registry.list().map((v) => (
-          <Pressable
-            key={v.id}
-            onPress={() => {
-              onFocus?.();
-              setViewId(v.id);
-            }}
-            style={[styles.modeButton, v.id === view.id && styles.modeButtonActive]}
-            testID={`${testID}-viewmode-${v.id}`}
-          >
-            <Text style={[styles.modeText, v.id === view.id && styles.modeTextActive]}>
-              {v.label}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      <PathBar uri={uri} focused={focused} onNavigate={navigate} testID={`${testID}-pathbar`} />
       {error ? (
         <Text style={styles.error}>Error: {error.message}</Text>
       ) : (
@@ -365,24 +648,48 @@ export function Panel({
           focused={focused}
           loading={loading}
           sort={sort}
-          onCursorMove={setCursor}
+          onCursorMove={(targetUri) => {
+            onFocus?.();
+            setCursorUri(targetUri);
+          }}
           onActivate={activateRow}
-          onChangeSort={setSort}
+          onChangeSort={(s) => {
+            onFocus?.();
+            setSort(s);
+          }}
           onToggleMark={(i) => {
             onFocus?.();
             setCursor(i);
             toggleMarkAt(i);
           }}
           onColumnStride={setColumnStride}
+          testID={`${testID}-list`}
         />
       )}
-      <View style={styles.footer}>
-        <Text style={styles.footerText} numberOfLines={1}>
-          {summary}
-        </Text>
-        {loading ? (
-          <View style={styles.loadingDot} />
-        ) : null}
+      <View style={styles.footer} testID={`${testID}-footer`}>
+        {footer.kind === "cursor" ? (
+          <>
+            <Text style={[styles.footerText, styles.footerName]} numberOfLines={1}>
+              {footer.name}
+            </Text>
+            <Text style={[styles.footerText, styles.footerSize]} numberOfLines={1}>
+              {footer.size}
+            </Text>
+            <Text style={[styles.footerText, styles.footerDate]} numberOfLines={1}>
+              {footer.date}
+            </Text>
+            <Text style={[styles.footerText, styles.footerAttr]} numberOfLines={1}>
+              {footer.attr}
+            </Text>
+          </>
+        ) : footer.kind === "selection" ? (
+          <Text style={[styles.footerText, styles.footerName]} numberOfLines={1}>
+            {footer.text}
+          </Text>
+        ) : (
+          <View style={styles.footerName} />
+        )}
+        {loading ? <View style={styles.loadingDot} /> : null}
         {quickQuery.length > 0 ? (
           <Text style={styles.quickQuery} numberOfLines={1}>
             Search: {quickQuery}
@@ -426,25 +733,81 @@ function extOf(name: string): string {
   return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
 }
 
-function computeSummary(entries: Stat[], marked: Set<Uri>): string {
-  const total = entries.length;
-  const totalSize = entries.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0);
-  let markedCount = 0;
-  let markedSize = 0;
+type FooterContent =
+  | { kind: "empty" }
+  | { kind: "selection"; text: string }
+  | { kind: "cursor"; name: string; size: string; date: string; attr: string };
+
+function computeFooter(
+  entries: Stat[],
+  marked: Set<Uri>,
+  cursorRow: Row | null,
+): FooterContent {
+  // No selection → show the cursor row's stats (TC behavior).
+  if (marked.size === 0) {
+    if (!cursorRow) return { kind: "empty" };
+    if (cursorRow.kind === "parent") {
+      return {
+        kind: "cursor",
+        name: "[..]",
+        size: "<DIR>",
+        date: "",
+        attr: "----",
+      };
+    }
+    const s = cursorRow.stat;
+    const isDir = s.kind === "dir";
+    return {
+      kind: "cursor",
+      // Dirs render with TC's [brackets] (DirBrackets=1).
+      name: isDir ? `[${s.name}]` : s.name,
+      size: isDir ? "<DIR>" : formatBytesGrouped(s.size),
+      date: formatDate(s.mtime),
+      attr: formatAttr({ kind: s.kind, hidden: s.hidden, exec: s.exec }),
+    };
+  }
+
+  // Selection summary in TC format:
+  //   "<selSize> / <totSize> in <selFiles> / <totFiles> file(s), <selDirs> / <totDirs> dir(s)"
+  let selFiles = 0;
+  let selDirs = 0;
+  let totFiles = 0;
+  let totDirs = 0;
+  let selSize = 0;
+  let totSize = 0;
   for (const e of entries) {
+    if (e.kind === "dir") totDirs++;
+    else {
+      totFiles++;
+      totSize += e.size;
+    }
     if (marked.has(e.uri)) {
-      markedCount++;
-      if (e.kind === "file") markedSize += e.size;
+      if (e.kind === "dir") selDirs++;
+      else {
+        selFiles++;
+        selSize += e.size;
+      }
     }
   }
-  return `${markedCount} / ${total} file(s), ${formatSize(markedSize)} / ${formatSize(totalSize)} marked`;
+  return {
+    kind: "selection",
+    text: `${formatSize(selSize)} / ${formatSize(totSize)} in ${selFiles} / ${totFiles} file(s), ${selDirs} / ${totDirs} dir(s)`,
+  };
+}
+
+function formatBytesGrouped(n: number): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tcTheme.color.panelBg,
-  },
+    // RN-Web's Pressable defaults to cursor: pointer (role=button). Children
+    // inherit. Force arrow cursor so the panel doesn't look "clickable" as a
+    // whole.
+    cursor: "default",
+  } as object,
   focused: {
     // Focus indicator lives in the cursor-row color now; no panel border.
   },
@@ -496,7 +859,27 @@ const styles = StyleSheet.create({
     color: tcTheme.color.text,
     fontFamily: tcTheme.font.ui,
     fontSize: tcTheme.font.sizeSmall,
-    flexShrink: 1,
+  },
+  // Cursor-info layout: name grows, size/date/attr right-aligned with gaps.
+  footerName: {
+    flex: 1,
+    minWidth: 0,
+  },
+  footerSize: {
+    textAlign: "right",
+    marginLeft: 20,
+    minWidth: 60,
+  },
+  footerDate: {
+    textAlign: "right",
+    marginLeft: 20,
+    minWidth: 130,
+  },
+  footerAttr: {
+    textAlign: "right",
+    marginLeft: 20,
+    minWidth: 40,
+    fontFamily: tcTheme.font.mono,
   },
   loadingDot: {
     width: 8,

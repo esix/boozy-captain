@@ -20,6 +20,12 @@ export {
   type MenuItem,
   type MenuSpec,
 } from "./MenuBar.js";
+export {
+  AppMenu,
+  type AppMenuItemProps,
+  type AppMenuMenuProps,
+  type AppMenuProps,
+} from "./AppMenu.js";
 export { Panel, type PanelProps, type PanelSelection } from "./Panel.js";
 export { PathBar, type PathBarProps } from "./PathBar.js";
 export { StatusBar, type StatusBarProps } from "./StatusBar.js";

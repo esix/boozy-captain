@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { tcTheme } from "@bc/theme";
 import { ColumnHeader, type ColumnDef } from "./ColumnHeader.js";
@@ -7,11 +7,25 @@ import { ROW_HEIGHT, formatAttr, formatDate, formatSize, rowColors, splitName } 
 import type { FileListView, FileListViewProps, Row } from "./types.js";
 
 const COLUMNS: readonly ColumnDef[] = [
-  { key: "name", label: "Name", flex: 3 },
-  { key: "ext", label: "Ext", flex: 1 },
-  { key: "size", label: "Size", flex: 1, alignRight: true },
-  { key: "date", label: "Date", flex: 2, alignRight: true },
+  { id: "name", sortKey: "name", label: "Name", flex: 3 },
+  { id: "ext", sortKey: "ext", label: "Ext", flex: 1 },
+  { id: "size", sortKey: "size", label: "Size", flex: 1, alignRight: true },
+  { id: "date", sortKey: "date", label: "Date", flex: 2, alignRight: true },
 ];
+
+// Memoized row — only re-renders when its visible props change, not on
+// every cursor move. Callback identity is deliberately ignored.
+// `FullRowImpl` is a hoisted function declaration so it's safe to reference
+// before its source position.
+const FullRow = memo(FullRowImpl, (a, b) => {
+  return (
+    a.row === b.row &&
+    a.flatIndex === b.flatIndex &&
+    a.isCursor === b.isCursor &&
+    a.focused === b.focused &&
+    a.isMarked === b.isMarked
+  );
+});
 
 function FullBody(props: FileListViewProps): JSX.Element {
   const {
@@ -25,6 +39,7 @@ function FullBody(props: FileListViewProps): JSX.Element {
     onActivate,
     onChangeSort,
     onToggleMark,
+    testID,
   } = props;
   const listRef = useRef<FlatList<Row> | null>(null);
 
@@ -38,7 +53,7 @@ function FullBody(props: FileListViewProps): JSX.Element {
   }, [cursor, rows.length]);
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID={testID}>
       <ColumnHeader columns={[...COLUMNS, ATTR_COL]} sort={sort} onChangeSort={onChangeSort} />
       <FlatList<Row>
         ref={listRef}
@@ -48,20 +63,24 @@ function FullBody(props: FileListViewProps): JSX.Element {
         onScrollToIndexFailed={() => {
           /* ignore */
         }}
-        renderItem={({ item, index }) => (
-          <FullRow
-            row={item}
-            isCursor={index === cursor}
-            focused={focused}
-            isMarked={item.kind === "entry" ? marked.has(item.stat.uri) : false}
-            onPress={() => onCursorMove(index)}
-            onDoublePress={() => {
-              onCursorMove(index);
-              onActivate(item);
-            }}
-            onContextMenu={() => onToggleMark?.(index)}
-          />
-        )}
+        renderItem={({ item, index }) => {
+          const rowUri = item.kind === "parent" ? item.uri : item.stat.uri;
+          return (
+            <FullRow
+              row={item}
+              flatIndex={index}
+              isCursor={index === cursor}
+              focused={focused}
+              isMarked={item.kind === "entry" ? marked.has(item.stat.uri) : false}
+              onPress={() => onCursorMove(rowUri)}
+              onDoublePress={() => {
+                onCursorMove(rowUri);
+                onActivate(item);
+              }}
+              onContextMenu={() => onToggleMark?.(index)}
+            />
+          );
+        }}
         ListEmptyComponent={
           loading ? <Text style={styles.status}>Reading…</Text> : <Text style={styles.status}>Empty</Text>
         }
@@ -71,10 +90,12 @@ function FullBody(props: FileListViewProps): JSX.Element {
   );
 }
 
-const ATTR_COL: ColumnDef = { key: "name", label: "Attr", flex: 1, alignRight: true };
+// Attr is display-only — no sortKey, so the header cell is non-interactive.
+const ATTR_COL: ColumnDef = { id: "attr", label: "Attr", flex: 1, alignRight: true };
 
-function FullRow({
+function FullRowImpl({
   row,
+  flatIndex,
   isCursor,
   focused,
   isMarked,
@@ -83,6 +104,7 @@ function FullRow({
   onContextMenu,
 }: {
   row: Row;
+  flatIndex: number;
   isCursor: boolean;
   focused: boolean;
   isMarked: boolean;
@@ -94,7 +116,7 @@ function FullRow({
   const isDir = isParent || (row.kind === "entry" && row.stat.kind === "dir");
   const hidden = row.kind === "entry" && row.stat.hidden === true;
   const exec = row.kind === "entry" && row.stat.exec === true;
-  const { bg, text } = rowColors({ isCursor, focused, marked: isMarked, hidden });
+  const { bg, text, outline } = rowColors({ isCursor, focused, marked: isMarked, hidden });
 
   let name: string;
   let ext: string;
@@ -117,6 +139,7 @@ function FullRow({
   }
 
   const lastTap = useRef(0);
+  const downHandledRef = useRef(false);
   const handlePress = (): void => {
     const now = Date.now();
     if (now - lastTap.current < 300) onDoublePress();
@@ -124,21 +147,45 @@ function FullRow({
     lastTap.current = now;
   };
 
+  // Fire on mousedown so streaming-induced row reshuffles between mousedown
+  // and mouseup don't cancel the click. See BriefView.tsx for the longer
+  // explanation.
+  void onContextMenu; // legacy prop; not wired here
   const webExtras = {
     tabIndex: -1,
-    onMouseDown: (e: { preventDefault(): void }) => e.preventDefault(),
-    onContextMenu: (e: { preventDefault(): void }) => {
+    onMouseDown: (e: { button: number; preventDefault(): void }) => {
       e.preventDefault();
-      onContextMenu?.();
+      if (e.button !== 0) return;
+      downHandledRef.current = true;
+      handlePress();
     },
+    dataSet: { rowIndex: flatIndex },
   } as unknown as object;
+  const fallbackPress = (): void => {
+    if (downHandledRef.current) {
+      downHandledRef.current = false;
+      return;
+    }
+    handlePress();
+  };
 
   const rowTestId = isParent ? "bc-row-parent" : `bc-row-${row.kind === "entry" ? row.stat.name : ""}`;
   return (
     <Pressable
-      onPress={handlePress}
+      onPress={fallbackPress}
       {...webExtras}
-      style={[styles.row, { backgroundColor: bg, height: ROW_HEIGHT }]}
+      style={[
+        styles.row,
+        { backgroundColor: bg, height: ROW_HEIGHT },
+        outline !== "none"
+          ? ({
+              outlineWidth: 1,
+              outlineStyle: "solid",
+              outlineColor: outline,
+              outlineOffset: -1,
+            } as object)
+          : null,
+      ]}
       testID={rowTestId}
     >
       <View style={styles.iconCell}>

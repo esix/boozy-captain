@@ -4,14 +4,12 @@ import { CommandRegistry, type HotkeyMap } from "@bc/core";
 import type { SurfaceHandle, SurfaceManager } from "@bc/surfaces";
 import { SurfaceLayer, WebSurfaceManager } from "@bc/surfaces-web";
 import {
+  AppMenu,
   ButtonBar,
   CommandLine,
   DEFAULT_FKEY_ACTIONS,
-  DEFAULT_MENUS,
   FKeyBar,
-  MenuBar,
   Panel,
-  StatusBar,
   TwoPanelLayout,
   tcTheme,
   useGlobalHotkeys,
@@ -19,7 +17,6 @@ import {
   type PanelSelection,
   type TabSpec,
 } from "@bc/ui-rn";
-import { formatSize } from "@bc/file-list";
 import type { Uri, VfsRegistry } from "@bc/vfs";
 
 export interface AppProps {
@@ -65,6 +62,12 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
   const [leftTabs, setLeftTabs] = useState<PanelTabState>(INITIAL_LEFT_TABS);
   const [rightTabs, setRightTabs] = useState<PanelTabState>(INITIAL_RIGHT_TABS);
   const [activeIndex, setActiveIndex] = useState<PanelIndex>(0);
+  const [leftViewId, setLeftViewId] = useState<string>("brief");
+  const [rightViewId, setRightViewId] = useState<string>("brief");
+  const setActiveViewId = (id: string): void => {
+    if (activeIndex === 0) setLeftViewId(id);
+    else setRightViewId(id);
+  };
 
   const leftUri = activeTabUri(leftTabs);
   const rightUri = activeTabUri(rightTabs);
@@ -91,11 +94,46 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
         e.preventDefault();
         setActiveIndex((i) => (i === 0 ? 1 : 0));
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) t.blur();
+        return;
+      }
+      // Browser intercepts Ctrl+T / Ctrl+Tab / Ctrl+W before web apps see
+      // them (they're reserved for browser tabs / window). Electron has no
+      // such reservation — those bindings will work natively when we ship
+      // the desktop build (target T3). For now in the web target we use
+      // Alt-modified equivalents that pass through:
+      //   Alt+T            → new tab
+      //   Ctrl+PageDown    → next tab
+      //   Ctrl+PageUp      → previous tab
+      // We also keep the Ctrl+T / Ctrl+Tab handlers registered so they fire
+      // in Electron once that build is in place.
+      const isCtrl = e.ctrlKey && !e.altKey && !e.metaKey;
+      const isAlt = e.altKey && !e.ctrlKey && !e.metaKey;
+      if (e.key === "Tab" && isCtrl) {
+        e.preventDefault();
+        cycleTab(activeIndex, e.shiftKey ? -1 : 1);
+        return;
+      }
+      if ((e.key === "PageDown" || e.key === "PageUp") && isCtrl) {
+        e.preventDefault();
+        cycleTab(activeIndex, e.key === "PageDown" ? 1 : -1);
+        return;
+      }
+      if ((e.key === "t" || e.key === "T") && (isCtrl || isAlt)) {
+        e.preventDefault();
+        newTab(activeIndex);
+        return;
+      }
+      // Alt+W (web) / Ctrl+W (Electron) → close active tab.
+      // Browser intercepts Ctrl+W to close the page; Alt+W is the web fallback.
+      if ((e.key === "w" || e.key === "W") && (isCtrl || isAlt)) {
+        e.preventDefault();
+        closeActiveTab(activeIndex);
+        return;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [activeIndex]);
 
   const fkeyActions: readonly FKeyAction[] = DEFAULT_FKEY_ACTIONS.map((a) => {
     const cmd = FKEY_COMMANDS[a.key];
@@ -110,10 +148,6 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
   });
 
   const activeUri = activeIndex === 0 ? leftUri : rightUri;
-  const activeSel = activeIndex === 0 ? leftSel.current : rightSel.current;
-
-  const statusText = useMemo(() => buildStatusText(activeSel), [activeSel]);
-
   // Per-panel mutators for tabs and current URI
   const setSideUri = (side: PanelIndex, next: Uri): void => {
     const setter = side === 0 ? setLeftTabs : setRightTabs;
@@ -147,13 +181,74 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
     });
     setActiveIndex(side);
   };
+  const cycleTab = (side: PanelIndex, delta: 1 | -1): void => {
+    const setter = side === 0 ? setLeftTabs : setRightTabs;
+    setter((prev) => {
+      if (prev.tabs.length <= 1) return prev;
+      const idx = prev.tabs.findIndex((t) => t.id === prev.activeId);
+      const next = (idx + delta + prev.tabs.length) % prev.tabs.length;
+      return { ...prev, activeId: prev.tabs[next]!.id };
+    });
+  };
+  const closeActiveTab = (side: PanelIndex): void => {
+    const state = side === 0 ? leftTabs : rightTabs;
+    if (state.tabs.length <= 1) return; // never close the last tab
+    closeTab(side, state.activeId);
+  };
 
   return (
     <View style={styles.root}>
-      <MenuBar
-        menus={DEFAULT_MENUS}
-        onSelect={(menu, item) => console.log(`[menu] ${menu}.${item}`)}
-      />
+      <AppMenu>
+        <AppMenu.Menu title="Files">
+          <AppMenu.Item title="Change Attributes…" onPress={() => console.log("[menu] files.changeAttr")} />
+          <AppMenu.Item title="Pack…" onPress={() => console.log("[menu] files.pack")} />
+          <AppMenu.Item title="Unpack Specific Files…" onPress={() => console.log("[menu] files.unpack")} />
+          <AppMenu.Separator />
+          <AppMenu.Item title="Compare By Content…" onPress={() => console.log("[menu] files.compare")} />
+          <AppMenu.Item title="Split File…" onPress={() => console.log("[menu] files.split")} />
+          <AppMenu.Item title="Combine Files…" onPress={() => console.log("[menu] files.combine")} />
+          <AppMenu.Separator />
+          <AppMenu.Item title="Exit" onPress={() => console.log("[menu] files.exit")} />
+        </AppMenu.Menu>
+        <AppMenu.Menu title="Mark">
+          <AppMenu.Item title="Select Group…" onPress={() => console.log("[menu] mark.selectGroup")} />
+          <AppMenu.Item title="Unselect Group…" onPress={() => console.log("[menu] mark.unselectGroup")} />
+          <AppMenu.Item title="Select All" onPress={() => console.log("[menu] mark.selectAll")} />
+          <AppMenu.Item title="Unselect All" onPress={() => console.log("[menu] mark.unselectAll")} />
+          <AppMenu.Item title="Invert Selection" onPress={() => console.log("[menu] mark.invert")} />
+        </AppMenu.Menu>
+        <AppMenu.Menu title="Commands">
+          <AppMenu.Item title="Open Command-Prompt" onPress={() => console.log("[menu] commands.openConsole")} />
+          <AppMenu.Item title="Search…" onPress={() => console.log("[menu] commands.search")} />
+          <AppMenu.Item title="Synchronize Dirs…" onPress={() => console.log("[menu] commands.syncDirs")} />
+          <AppMenu.Item title="Multi-Rename Tool…" onPress={() => console.log("[menu] commands.multiRename")} />
+        </AppMenu.Menu>
+        <AppMenu.Menu title="Net">
+          <AppMenu.Item title="FTP Connect…" onPress={() => console.log("[menu] net.ftpConnect")} />
+          <AppMenu.Item title="FTP New Connection…" onPress={() => console.log("[menu] net.ftpNew")} />
+          <AppMenu.Item title="FTP Disconnect" onPress={() => console.log("[menu] net.ftpDisconnect")} />
+        </AppMenu.Menu>
+        <AppMenu.Menu title="Show">
+          <AppMenu.Item title="Brief" onPress={() => setActiveViewId("brief")} />
+          <AppMenu.Item title="Full" onPress={() => setActiveViewId("full")} />
+          <AppMenu.Item title="Tree" onPress={() => setActiveViewId("tree")} />
+          <AppMenu.Item title="Thumbnail View" onPress={() => console.log("[menu] show.thumbnails")} />
+          <AppMenu.Separator />
+          <AppMenu.Item title="Quick View Panel" onPress={() => console.log("[menu] show.quickView")} />
+        </AppMenu.Menu>
+        <AppMenu.Menu title="Configuration">
+          <AppMenu.Item title="Options…" onPress={() => console.log("[menu] config.options")} />
+          <AppMenu.Item title="File Types & Icons…" onPress={() => console.log("[menu] config.fileTypes")} />
+          <AppMenu.Item title="Change Button Bar…" onPress={() => console.log("[menu] config.buttonBar")} />
+        </AppMenu.Menu>
+        <AppMenu.Menu title="Start">
+          <AppMenu.Item title="Calculator" onPress={() => console.log("[menu] start.calculator")} />
+        </AppMenu.Menu>
+        <AppMenu.Menu title="Help" align="end">
+          <AppMenu.Item title="Contents" onPress={() => console.log("[menu] help.contents")} />
+          <AppMenu.Item title="About…" onPress={() => console.log("[menu] help.about")} />
+        </AppMenu.Menu>
+      </AppMenu>
       <ButtonBar onPress={(id) => console.log(`[toolbar] ${id}`)} />
       <TwoPanelLayout
         left={
@@ -161,6 +256,7 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
             testID="bc-panel-left"
             vfs={vfs}
             uri={leftUri}
+            viewId={leftViewId}
             onNavigate={(u) => setSideUri(0, u)}
             focused={activeIndex === 0}
             onFocus={() => setActiveIndex(0)}
@@ -168,6 +264,7 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
               leftSel.current = sel;
             }}
             driveInfo="[Local Disk]   mock filesystem"
+            onCreateTab={() => newTab(0)}
             tabs={{
               items: leftTabs.tabs,
               activeId: leftTabs.activeId,
@@ -182,6 +279,7 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
             testID="bc-panel-right"
             vfs={vfs}
             uri={rightUri}
+            viewId={rightViewId}
             onNavigate={(u) => setSideUri(1, u)}
             focused={activeIndex === 1}
             onFocus={() => setActiveIndex(1)}
@@ -189,6 +287,7 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
               rightSel.current = sel;
             }}
             driveInfo="[Local Disk]   mock filesystem"
+            onCreateTab={() => newTab(1)}
             tabs={{
               items: rightTabs.tabs,
               activeId: rightTabs.activeId,
@@ -199,7 +298,6 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
           />
         }
       />
-      <StatusBar text={statusText} />
       <CommandLine
         prompt={activeUri}
         onSubmit={(cmd) => {
@@ -214,15 +312,6 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
 
 function activeTabUri(state: PanelTabState): Uri {
   return state.tabs.find((t) => t.id === state.activeId)?.uri ?? "mock:///";
-}
-
-function buildStatusText(sel: PanelSelection | null): string {
-  if (!sel) return "";
-  const totalSize = sel.entries.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0);
-  const markedSize = sel.marked.reduce((s, e) => s + (e.kind === "file" ? e.size : 0), 0);
-  const dirs = sel.entries.filter((e) => e.kind === "dir").length;
-  const files = sel.entries.length - dirs;
-  return `${formatSize(markedSize)} / ${formatSize(totalSize)} in ${sel.marked.length} / ${files} file(s), ${dirs} dir(s)`;
 }
 
 function buildFkeyRegistry(

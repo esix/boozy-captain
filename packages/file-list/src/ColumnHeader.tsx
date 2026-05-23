@@ -9,7 +9,10 @@ const nonFocusableWebProps = {
 } as unknown as object;
 
 export interface ColumnDef {
-  key: SortKey;
+  /** Stable id used as React key + testID; must be unique within a header. */
+  id: string;
+  /** Sort key. When omitted the column is display-only (header doesn't sort). */
+  sortKey?: SortKey;
   label: string;
   /** flex value for sizing the body row cells (not used for the header). */
   flex: number;
@@ -39,15 +42,10 @@ const DEFAULT_DIRECTION: Record<SortKey, "asc" | "desc"> = {
 
 export function ColumnHeader({ columns, sort, onChangeSort, leadingWidth }: ColumnHeaderProps): JSX.Element {
   return (
-    <View style={styles.header}>
+    <View style={styles.header} testID="bc-col-header">
       {leadingWidth ? <View style={{ width: leadingWidth + 4 }} /> : null}
       {columns.map((c) => (
-        <HeaderCell
-          key={c.key}
-          col={c}
-          sort={sort}
-          onChangeSort={onChangeSort}
-        />
+        <HeaderCell key={c.id} col={c} sort={sort} onChangeSort={onChangeSort} />
       ))}
     </View>
   );
@@ -62,35 +60,40 @@ function HeaderCell({
   sort: SortSpec;
   onChangeSort?: (sort: SortSpec) => void;
 }): JSX.Element {
-  const isSorted = sort.key === col.key;
   const [hovered, setHovered] = useState(false);
 
   if (col.visible === false) {
     return <View style={styles.cell} />;
   }
 
-  const arrow = isSorted ? (sort.direction === "asc" ? "↑" : "↓") : "";
-  const bg = isSorted ? styles.cellActive : hovered ? styles.cellHover : null;
+  const sortable = col.sortKey !== undefined;
+  const isSorted = sortable && sort.key === col.sortKey;
+  const arrow = isSorted ? (sort.direction === "asc" ? "▲" : "▼") : "";
+  const bg = isSorted ? styles.cellActive : hovered && sortable ? styles.cellHover : null;
   return (
     <Pressable
-      onPress={() => {
-        if (isSorted) {
-          onChangeSort?.({
-            key: col.key,
-            direction: sort.direction === "asc" ? "desc" : "asc",
-          });
-        } else {
-          onChangeSort?.({
-            key: col.key,
-            direction: col.defaultDirection ?? DEFAULT_DIRECTION[col.key],
-          });
-        }
-      }}
+      onPress={
+        sortable && col.sortKey
+          ? () => {
+              if (isSorted) {
+                onChangeSort?.({
+                  key: col.sortKey!,
+                  direction: sort.direction === "asc" ? "desc" : "asc",
+                });
+              } else {
+                onChangeSort?.({
+                  key: col.sortKey!,
+                  direction: col.defaultDirection ?? DEFAULT_DIRECTION[col.sortKey!],
+                });
+              }
+            }
+          : undefined
+      }
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       {...nonFocusableWebProps}
       style={[styles.cell, bg]}
-      testID={`bc-col-${col.key}`}
+      testID={`bc-col-${col.id}`}
     >
       <Text style={styles.label} numberOfLines={1}>
         {arrow ? <Text style={styles.arrow}>{arrow}</Text> : null}
@@ -104,6 +107,7 @@ function HeaderCell({
 const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
+    height: 18,
     backgroundColor: tcTheme.color.panelBg,
     borderBottomWidth: 1,
     borderBottomColor: tcTheme.color.headerBorder,
@@ -111,11 +115,11 @@ const styles = StyleSheet.create({
   cell: {
     flex: 1,
     paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingVertical: 0,
+    justifyContent: "center",
     backgroundColor: tcTheme.color.panelBg,
     borderRightWidth: 1,
     borderRightColor: tcTheme.color.headerBorder,
-    // Web-only: arrow cursor on hover.
     cursor: "default",
   } as object,
   cellHover: {
@@ -127,11 +131,13 @@ const styles = StyleSheet.create({
   label: {
     color: tcTheme.color.headerText,
     fontFamily: tcTheme.font.ui,
-    fontSize: tcTheme.font.size,
+    fontSize: 11,
+    lineHeight: 13,
     textAlign: "left",
   },
   arrow: {
-    fontWeight: "700",
+    fontSize: 9,
+    fontWeight: "900",
     color: tcTheme.color.text,
   },
 });

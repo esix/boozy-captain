@@ -51,6 +51,17 @@
       html ::-webkit-scrollbar-thumb:hover { background: #A0A0A0 !important; }
       [class*="r-scrollbarWidth"]::-webkit-scrollbar-corner,
       html ::-webkit-scrollbar-corner { background: #F0F0F0 !important; }
+      /* TabBar scrolls via its own ‹ › buttons (TC-style) — hide the native
+         scrollbar there even though the global rule forces it on. */
+      [data-testid$="-tabbar-scroll"] {
+        scrollbar-width: none !important;
+        -ms-overflow-style: none !important;
+      }
+      [data-testid$="-tabbar-scroll"]::-webkit-scrollbar {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+      }
     </style>
   </head>
   <body>
@@ -66,6 +77,14 @@
         if (!(t instanceof HTMLElement)) return;
         if (t.closest("input, textarea, [contenteditable='true']")) return;
         if (t.closest("[role='button']")) e.preventDefault();
+      }, true);
+      // App is desktop-like — right-click is used for selection / drag.
+      // Suppress the browser context menu globally (except inside text inputs
+      // so users keep system copy/paste there).
+      document.addEventListener("contextmenu", function (e) {
+        var t = e.target;
+        if (t instanceof HTMLElement && t.closest("input, textarea, [contenteditable='true']")) return;
+        e.preventDefault();
       }, true);
     </script>
     <script type="module" src="/src/main.tsx"></script>

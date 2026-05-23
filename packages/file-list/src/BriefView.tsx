@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -15,10 +15,10 @@ import type { FileListView, FileListViewProps, Row } from "./types.js";
 
 // Brief renders all four headers (matches TC) even though body only has name+ext.
 const COLUMNS: readonly ColumnDef[] = [
-  { key: "name", label: "Name", flex: 3 },
-  { key: "ext", label: "Ext", flex: 1 },
-  { key: "size", label: "Size", flex: 1, alignRight: true },
-  { key: "date", label: "Date", flex: 2, alignRight: true },
+  { id: "name", sortKey: "name", label: "Name", flex: 3 },
+  { id: "ext", sortKey: "ext", label: "Ext", flex: 1 },
+  { id: "size", sortKey: "size", label: "Size", flex: 1, alignRight: true },
+  { id: "date", sortKey: "date", label: "Date", flex: 2, alignRight: true },
 ];
 
 const HEADER_HEIGHT = 18;
@@ -32,6 +32,23 @@ const MIN_COL_WIDTH = 80;
  * layout. Column width is determined by the longest item; horizontal
  * ScrollView when columns overflow. Header stays as the 4-column TC header.
  */
+// Memoized row — only re-renders when its visible props actually change, so
+// a cursor move doesn't re-render every row in a 1000-entry list. Callback
+// identity is deliberately ignored (those closures are recreated each parent
+// render but their behavior is unchanged).
+// Function declaration `BriefRowImpl` (defined below) is hoisted, so it's
+// safe to reference here.
+const BriefRow = memo(BriefRowImpl, (a, b) => {
+  return (
+    a.row === b.row &&
+    a.flatIndex === b.flatIndex &&
+    a.display === b.display &&
+    a.isCursor === b.isCursor &&
+    a.focused === b.focused &&
+    a.isMarked === b.isMarked
+  );
+});
+
 function BriefBody(props: FileListViewProps): JSX.Element {
   const {
     rows,
@@ -45,9 +62,32 @@ function BriefBody(props: FileListViewProps): JSX.Element {
     onChangeSort,
     onToggleMark,
     onColumnStride,
+    testID,
   } = props;
   const [container, setContainer] = useState({ width: 0, height: 0 });
   const scrollRef = useRef<ScrollView | null>(null);
+  const scrollOffsetRef = useRef(0);
+  const containerRef = useRef<View | null>(null);
+
+  // Vertical mouse-wheel → horizontal scroll (Brief is column-major; users
+  // with a mouse expect to flick through columns with the wheel).
+  // We attach as a non-passive listener so preventDefault works in Chrome,
+  // and only intercept when the wheel is predominantly vertical (touchpads
+  // doing horizontal wheel still pass through to natural horizontal scroll).
+  useEffect(() => {
+    const el = containerRef.current as unknown as HTMLElement | null;
+    if (!el) return;
+    const handler = (e: WheelEvent): void => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      const sv = scrollRef.current;
+      if (!sv) return;
+      const next = Math.max(0, scrollOffsetRef.current + e.deltaY);
+      sv.scrollTo({ x: next, animated: false });
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
   const display = useMemo(() => rows.map(displayFor), [rows]);
 
@@ -123,7 +163,7 @@ function BriefBody(props: FileListViewProps): JSX.Element {
   };
 
   return (
-    <View style={styles.container} onLayout={onLayout}>
+    <View style={styles.container} onLayout={onLayout} testID={testID} ref={containerRef}>
       <ColumnHeader columns={COLUMNS} sort={sort} onChangeSort={onChangeSort} />
       {rows.length === 0 ? (
         <Text style={styles.status}>{loading ? "Reading…" : "Empty"}</Text>
@@ -135,22 +175,30 @@ function BriefBody(props: FileListViewProps): JSX.Element {
           showsHorizontalScrollIndicator
           style={styles.scrollOuter}
           contentContainerStyle={styles.scrollContent}
+          onScroll={(e) => {
+            scrollOffsetRef.current = e.nativeEvent.contentOffset.x;
+          }}
+          scrollEventThrottle={16}
         >
           {columns.map((colRows, ci) => (
             <View key={ci} style={[styles.column, { width: colWidth }]}>
               {colRows.map((row, ri) => {
                 const flatIndex = ci * rowsPerCol + ri;
+                // Capture URI at render time — survives row reshuffles caused
+                // by streaming + sort.
+                const rowUri = row.kind === "parent" ? row.uri : row.stat.uri;
                 return (
                   <BriefRow
-                    key={row.kind === "parent" ? "_parent" : row.stat.uri}
+                    key={rowUri}
                     row={row}
+                    flatIndex={flatIndex}
                     display={display[flatIndex]!}
                     isCursor={flatIndex === cursor}
                     focused={focused}
                     isMarked={row.kind === "entry" ? marked.has(row.stat.uri) : false}
-                    onPress={() => onCursorMove(flatIndex)}
+                    onPress={() => onCursorMove(rowUri)}
                     onDoublePress={() => {
-                      onCursorMove(flatIndex);
+                      onCursorMove(rowUri);
                       onActivate(row);
                     }}
                     onContextMenu={() => onToggleMark?.(flatIndex)}
@@ -178,6 +226,7 @@ function displayFor(row: Row): DisplayParts {
 
 interface BriefRowProps {
   row: Row;
+  flatIndex: number;
   display: DisplayParts;
   isCursor: boolean;
   focused: boolean;
@@ -187,8 +236,9 @@ interface BriefRowProps {
   onContextMenu?: () => void;
 }
 
-function BriefRow({
+function BriefRowImpl({
   row,
+  flatIndex,
   display,
   isCursor,
   focused,
@@ -200,9 +250,10 @@ function BriefRow({
   const isParent = row.kind === "parent";
   const isDir = isParent || (row.kind === "entry" && row.stat.kind === "dir");
   const hidden = row.kind === "entry" && row.stat.hidden === true;
-  const { bg, text } = rowColors({ isCursor, focused, marked: isMarked, hidden });
+  const { bg, text, outline } = rowColors({ isCursor, focused, marked: isMarked, hidden });
 
   const lastTap = useRef(0);
+  const downHandledRef = useRef(false);
   const handlePress = (): void => {
     const now = Date.now();
     if (now - lastTap.current < 300) onDoublePress();
@@ -210,24 +261,52 @@ function BriefRow({
     lastTap.current = now;
   };
 
-  // RN-Web passes onContextMenu through to the underlying div, but RN's types
-  // don't expose it on Pressable — cast to spread. Also make the row
-  // non-focusable so clicking it doesn't shift keyboard focus.
+  // Fire the click on mousedown instead of waiting for the click event.
+  // Reason: while the directory is streaming, new entries can be inserted
+  // into the sorted row order between mousedown and mouseup. The browser
+  // only emits `click` when mousedown + mouseup land on the SAME element,
+  // so a reshuffle would cause the click to be cancelled. Mousedown is
+  // immediate, so the press lands before any reshuffle can happen.
+  void onContextMenu; // legacy prop; kept on the interface, not used here
   const webExtras = {
     tabIndex: -1,
-    onMouseDown: (e: { preventDefault(): void }) => e.preventDefault(),
-    onContextMenu: (e: { preventDefault(): void }) => {
+    onMouseDown: (e: { button: number; preventDefault(): void }) => {
       e.preventDefault();
-      onContextMenu?.();
+      if (e.button !== 0) return; // right-button is handled by the panel
+      downHandledRef.current = true;
+      handlePress();
     },
+    dataSet: { rowIndex: flatIndex },
   } as unknown as object;
+
+  // Fallback for environments where mousedown doesn't fire but onPress does
+  // (touch on native, or some odd web edge cases). Dedupes against the
+  // mousedown path so we don't double-handle a single interaction.
+  const fallbackPress = (): void => {
+    if (downHandledRef.current) {
+      downHandledRef.current = false;
+      return;
+    }
+    handlePress();
+  };
 
   const rowTestId = isParent ? "bc-row-parent" : `bc-row-${row.kind === "entry" ? row.stat.name : ""}`;
   return (
     <Pressable
-      onPress={handlePress}
+      onPress={fallbackPress}
       {...webExtras}
-      style={[styles.row, { backgroundColor: bg, height: ROW_HEIGHT }]}
+      style={[
+        styles.row,
+        { backgroundColor: bg, height: ROW_HEIGHT },
+        outline !== "none"
+          ? ({
+              outlineWidth: 1,
+              outlineStyle: "solid",
+              outlineColor: outline,
+              outlineOffset: -1,
+            } as object)
+          : null,
+      ]}
       testID={rowTestId}
     >
       <View style={styles.iconCell}>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { tcTheme } from "./theme.js";
 
@@ -111,7 +111,33 @@ const nonFocusable = {
 } as unknown as object;
 
 export function MenuBar({ menus, onSelect }: MenuBarProps): JSX.Element {
+  // open === null → closed. While open, hovering a sibling menu trigger or
+  // pressing Esc / clicking outside closes; hovering items highlights them.
   const [open, setOpen] = useState<string | null>(null);
+  const [hoveredItem, setHoveredItem] = useState<string | null>(null);
+  const barRef = useRef<View | null>(null);
+
+  // Esc + click-outside dismiss while the menu is open.
+  useEffect(() => {
+    if (open === null) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(null);
+      }
+    };
+    const onMouseDown = (e: MouseEvent): void => {
+      const el = barRef.current as unknown as HTMLElement | null;
+      if (el && e.target instanceof Node && el.contains(e.target)) return;
+      setOpen(null);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onMouseDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onMouseDown, true);
+    };
+  }, [open]);
 
   const leftMenus = menus.filter((m) => m.align !== "right");
   const rightMenus = menus.filter((m) => m.align === "right");
@@ -120,6 +146,11 @@ export function MenuBar({ menus, onSelect }: MenuBarProps): JSX.Element {
     <View key={m.id} testID={`bc-menu-${m.id}`}>
       <Pressable
         onPress={() => setOpen((cur) => (cur === m.id ? null : m.id))}
+        // While another menu is open, hovering this trigger swaps the open
+        // dropdown to the hovered one (classic OS menu behavior).
+        onHoverIn={() => {
+          setOpen((cur) => (cur !== null && cur !== m.id ? m.id : cur));
+        }}
         style={[styles.menu, open === m.id && styles.menuOpen]}
         testID={`bc-menu-${m.id}-trigger`}
         {...nonFocusable}
@@ -127,33 +158,49 @@ export function MenuBar({ menus, onSelect }: MenuBarProps): JSX.Element {
         <Text style={styles.menuText}>{m.label}</Text>
       </Pressable>
       {open === m.id ? (
-        <View style={styles.dropdown} testID={`bc-menu-${m.id}-dropdown`}>
-          {m.items.map((it) => (
-            <View key={it.id}>
-              {it.separator ? <View style={styles.separator} /> : null}
-              <Pressable
-                disabled={it.disabled}
-                onPress={() => {
-                  setOpen(null);
-                  onSelect?.(m.id, it.id);
-                }}
-                style={styles.dropdownItem}
-                testID={`bc-menu-item-${m.id}-${it.id}`}
-                {...nonFocusable}
-              >
-                <Text style={[styles.dropdownItemText, it.disabled && styles.disabled]}>
-                  {it.label}
-                </Text>
-              </Pressable>
-            </View>
-          ))}
+        <View
+          style={[styles.dropdown, m.align === "right" ? styles.dropdownRight : null]}
+          testID={`bc-menu-${m.id}-dropdown`}
+        >
+          {m.items.map((it) => {
+            const hoverKey = `${m.id}.${it.id}`;
+            const isHovered = hoveredItem === hoverKey && !it.disabled;
+            return (
+              <View key={it.id}>
+                {it.separator ? <View style={styles.separator} /> : null}
+                <Pressable
+                  disabled={it.disabled}
+                  onPress={() => {
+                    setOpen(null);
+                    setHoveredItem(null);
+                    onSelect?.(m.id, it.id);
+                  }}
+                  onHoverIn={() => setHoveredItem(hoverKey)}
+                  onHoverOut={() => setHoveredItem((cur) => (cur === hoverKey ? null : cur))}
+                  style={[styles.dropdownItem, isHovered && styles.dropdownItemHover]}
+                  testID={`bc-menu-item-${m.id}-${it.id}`}
+                  {...nonFocusable}
+                >
+                  <Text
+                    style={[
+                      styles.dropdownItemText,
+                      isHovered && styles.dropdownItemTextHover,
+                      it.disabled && styles.disabled,
+                    ]}
+                  >
+                    {it.label}
+                  </Text>
+                </Pressable>
+              </View>
+            );
+          })}
         </View>
       ) : null}
     </View>
   );
 
   return (
-    <View style={styles.bar} testID="bc-menubar">
+    <View style={styles.bar} testID="bc-menubar" ref={barRef}>
       <View style={styles.row}>{leftMenus.map(renderMenu)}</View>
       <View style={styles.spacer} />
       <View style={styles.row}>{rightMenus.map(renderMenu)}</View>
@@ -187,11 +234,16 @@ const styles = StyleSheet.create({
     fontFamily: tcTheme.font.ui,
     fontSize: tcTheme.font.size,
   },
+  dropdownRight: {
+    left: "auto",
+    right: 0,
+  } as object,
   dropdown: {
     position: "absolute",
     top: "100%",
     left: 0,
     minWidth: 180,
+    zIndex: 200,
     backgroundColor: tcTheme.color.panelBg,
     borderWidth: 1,
     borderColor: tcTheme.color.chromeBorder,
@@ -205,10 +257,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 3,
   },
+  dropdownItemHover: {
+    backgroundColor: tcTheme.color.panelBorderFocused,
+  },
   dropdownItemText: {
     color: tcTheme.color.text,
     fontFamily: tcTheme.font.ui,
     fontSize: tcTheme.font.size,
+  },
+  dropdownItemTextHover: {
+    color: "#FFFFFF",
   },
   disabled: {
     color: tcTheme.color.textDim,

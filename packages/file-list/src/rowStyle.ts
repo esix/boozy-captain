@@ -5,6 +5,8 @@ export const ROW_HEIGHT = 15;
 export interface RowColors {
   bg: string;
   text: string;
+  /** CSS outline colour for web rendering ("none" → no outline). Layout-safe. */
+  outline: string;
 }
 
 export function rowColors(opts: {
@@ -16,15 +18,18 @@ export function rowColors(opts: {
   const { isCursor, focused, marked } = opts;
   let bg: string = "transparent";
   let text: string = tcTheme.color.text;
+  let outline: string = "none";
   // Cursor is only visually shown on the focused panel — TC behavior.
   if (isCursor && focused) {
     bg = tcTheme.color.cursorBg;
     text = tcTheme.color.cursorText;
+    outline = tcTheme.color.cursorBorder;
   }
-  // Marked rows render red (TC's default selection color). The hidden flag
-  // does not change color — every file uses the same foreground regardless.
-  if (marked && !(isCursor && focused)) text = tcTheme.color.textMarked;
-  return { bg, text };
+  // Marked rows render red (TC's default selection color) — overrides cursor
+  // text color so a marked row stays visibly red even when the cursor is on
+  // it. Hidden flag never changes color.
+  if (marked) text = tcTheme.color.textMarked;
+  return { bg, text, outline };
 }
 
 export function splitName(raw: string, isDir: boolean): { displayName: string; ext: string } {

@@ -22,8 +22,11 @@ export const tcTheme = {
     textDir: "#000000",
     textMarked: "#C00000",
 
-    cursorBg: "#0078D7",
-    cursorText: "#FFFFFF",
+    // Active cursor: light blue background, normal-black text, darker-blue
+    // outline (rendered via CSS outline so it doesn't affect layout).
+    cursorBg: "#CCE4F7",
+    cursorText: "#000000",
+    cursorBorder: "#0078D7",
     // Inactive cursor is a noticeable grey so it doesn't blend with the light-blue header.
     cursorBgInactive: "#B8B8B8",
     cursorTextInactive: "#000000",

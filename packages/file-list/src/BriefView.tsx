@@ -45,7 +45,8 @@ const BriefRow = memo(BriefRowImpl, (a, b) => {
     a.display === b.display &&
     a.isCursor === b.isCursor &&
     a.focused === b.focused &&
-    a.isMarked === b.isMarked
+    a.isMarked === b.isMarked &&
+    a.isDropTarget === b.isDropTarget
   );
 });
 
@@ -62,6 +63,7 @@ function BriefBody(props: FileListViewProps): JSX.Element {
     onChangeSort,
     onToggleMark,
     onColumnStride,
+    dropHighlightUri,
     testID,
   } = props;
   const [container, setContainer] = useState({ width: 0, height: 0 });
@@ -122,8 +124,14 @@ function BriefBody(props: FileListViewProps): JSX.Element {
   // Add overhead for row padding (2*4) + icon (14) + icon margin (2) + gutter.
   const ROW_OVERHEAD = 8 + 14 + 2 + COL_GUTTER;
   const naturalColWidth = widest + ROW_OVERHEAD;
-  const colWidth =
-    container.width > 0 && naturalColWidth > container.width ? container.width : naturalColWidth;
+  // Subtract one full pixel from the clamp. onLayout on the outer View can
+  // report an integer (e.g. 425) while the inner ScrollView's content area
+  // ends up at 424.5 (browser snaps half-pixels via flex/border math). With
+  // exact-match clamping the column is then a fraction wider than the
+  // viewport and the browser shows a 0.5-px scrollbar that scrolls nothing.
+  // One px of safety eliminates the race without being visually noticeable.
+  const cap = container.width > 0 ? Math.floor(container.width) - 1 : Infinity;
+  const colWidth = naturalColWidth > cap ? cap : naturalColWidth;
 
   // Two-pass height calculation: figure out if a horizontal scrollbar will
   // appear, and if so reserve its height so the last row isn't clipped.
@@ -173,12 +181,17 @@ function BriefBody(props: FileListViewProps): JSX.Element {
           ref={scrollRef}
           horizontal
           showsHorizontalScrollIndicator
+          // overflow-x: auto comes from index.html (RN-Web's inline atomic
+          // class wins over a style-prop override; only a stylesheet rule
+          // with `!important` can flip it). The bar only shows on real
+          // overflow, never for a single-column-fits dir.
           style={styles.scrollOuter}
           contentContainerStyle={styles.scrollContent}
           onScroll={(e) => {
             scrollOffsetRef.current = e.nativeEvent.contentOffset.x;
           }}
           scrollEventThrottle={16}
+          testID={`${testID}-brief-scroll`}
         >
           {columns.map((colRows, ci) => (
             <View key={ci} style={[styles.column, { width: colWidth }]}>
@@ -196,6 +209,7 @@ function BriefBody(props: FileListViewProps): JSX.Element {
                     isCursor={flatIndex === cursor}
                     focused={focused}
                     isMarked={row.kind === "entry" ? marked.has(row.stat.uri) : false}
+                    isDropTarget={dropHighlightUri != null && rowUri === dropHighlightUri}
                     onPress={() => onCursorMove(rowUri)}
                     onDoublePress={() => {
                       onCursorMove(rowUri);
@@ -231,6 +245,7 @@ interface BriefRowProps {
   isCursor: boolean;
   focused: boolean;
   isMarked: boolean;
+  isDropTarget: boolean;
   onPress: () => void;
   onDoublePress: () => void;
   onContextMenu?: () => void;
@@ -243,6 +258,7 @@ function BriefRowImpl({
   isCursor,
   focused,
   isMarked,
+  isDropTarget,
   onPress,
   onDoublePress,
   onContextMenu,
@@ -250,6 +266,7 @@ function BriefRowImpl({
   const isParent = row.kind === "parent";
   const isDir = isParent || (row.kind === "entry" && row.stat.kind === "dir");
   const hidden = row.kind === "entry" && row.stat.hidden === true;
+  const rowUri = isParent ? row.uri : row.stat.uri;
   const { bg, text, outline } = rowColors({ isCursor, focused, marked: isMarked, hidden });
 
   const lastTap = useRef(0);
@@ -276,7 +293,9 @@ function BriefRowImpl({
       downHandledRef.current = true;
       handlePress();
     },
-    dataSet: { rowIndex: flatIndex },
+    // rowIndex: drag-select hit-testing. dropUri/dropKind: drag-and-drop
+    // target resolution (the panel-level drag manager reads these).
+    dataSet: { rowIndex: flatIndex, dropUri: rowUri, dropKind: isDir ? "dir" : "file" },
   } as unknown as object;
 
   // Fallback for environments where mousedown doesn't fire but onPress does
@@ -298,7 +317,15 @@ function BriefRowImpl({
       style={[
         styles.row,
         { backgroundColor: bg, height: ROW_HEIGHT },
-        outline !== "none"
+        // Drop target border (black) wins over the cursor outline (blue).
+        isDropTarget
+          ? ({
+              outlineWidth: 1,
+              outlineStyle: "solid",
+              outlineColor: "#000000",
+              outlineOffset: -1,
+            } as object)
+          : outline !== "none"
           ? ({
               outlineWidth: 1,
               outlineStyle: "solid",

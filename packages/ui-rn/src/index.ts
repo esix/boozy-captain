@@ -34,4 +34,13 @@ export { TitleBar, type TitleBarProps } from "./TitleBar.js";
 export { tcTheme, type TcTheme } from "./theme.js";
 export { TwoPanelLayout, type TwoPanelLayoutProps } from "./TwoPanelLayout.js";
 export { useDirectoryStream, type DirectoryStreamState } from "./useDirectoryStream.js";
+export {
+  useFileDrag,
+  type FileDragController,
+  type FileDragItem,
+  type FileDragPayload,
+  type FileDropDescriptor,
+  type DropEffect,
+  type DropTargetState,
+} from "./useFileDrag.js";
 export { useGlobalHotkeys } from "./useGlobalHotkeys.js";

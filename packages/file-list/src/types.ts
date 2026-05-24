@@ -41,6 +41,9 @@ export interface FileListViewProps {
    * views: 0 (no horizontal navigation).
    */
   onColumnStride?: (stride: number) => void;
+  /** URI of the row to highlight as the active drag-and-drop target (a
+   *  directory or `[..]`). Drawn with a black outline. Null when none. */
+  dropHighlightUri?: Uri | null;
   /** Optional data-testid for the view's outer container. */
   testID?: string;
 }

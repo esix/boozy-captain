@@ -12,13 +12,13 @@ import {
   type Row,
   type SortSpec,
 } from "@bc/file-list";
-import type { Stat, Uri, VfsRegistry } from "@bc/vfs";
-import { parentUri } from "@bc/vfs";
+import type { DriveGroup, Stat, Uri, VfsRegistry } from "@bc/vfs";
 import { DriveBar } from "./DriveBar.js";
 import { PathBar } from "./PathBar.js";
 import { TabBar, type TabSpec } from "./TabBar.js";
 import { tcTheme } from "./theme.js";
 import { useDirectoryStream } from "./useDirectoryStream.js";
+import type { FileDragItem, FileDragPayload } from "./useFileDrag.js";
 import { useGlobalHotkeys } from "./useGlobalHotkeys.js";
 
 export interface PanelSelection {
@@ -51,6 +51,19 @@ export interface PanelProps {
   tabs?: PanelTabsProps;
   /** Optional free-space line shown in the DriveBar. */
   driveInfo?: string;
+  /** Per-plugin drive groups for the DriveBar combo dropdown. */
+  driveGroups?: readonly DriveGroup[];
+  /** Controlled open state for the DriveBar combo dropdown (Alt+F1/F2). */
+  driveBarOpen?: boolean;
+  onDriveBarOpenChange?: (open: boolean) => void;
+  /** This panel's index (0 = left, 1 = right). Used for drag-and-drop
+   *  source/target panel resolution. */
+  panelIndex?: number;
+  /** Called when the user starts dragging file(s) out of this panel. The
+   *  payload is the marked set (if any) else the pressed row's item. */
+  onFileDragStart?: (payload: FileDragPayload) => void;
+  /** URI of the directory row to highlight as the active drop target. */
+  dropHighlightUri?: Uri | null;
   /** Prefix for data-testid attributes on this panel and its children. */
   testID?: string;
   /** Double-click on the panel's empty area triggers this (TC creates a new tab). */
@@ -70,6 +83,12 @@ export function Panel({
   viewId = "brief",
   tabs,
   driveInfo,
+  driveGroups,
+  driveBarOpen,
+  onDriveBarOpenChange,
+  panelIndex = 0,
+  onFileDragStart,
+  dropHighlightUri,
   testID = "bc-panel",
   onCreateTab,
 }: PanelProps): JSX.Element {
@@ -82,7 +101,7 @@ export function Panel({
   // -1 while the URI isn't present in `rows` (e.g. just navigated up and the
   // parent listing is still streaming — show "no row highlighted" rather than
   // flashing on [..] briefly).
-  const [cursorUri, setCursorUri] = useState<Uri | null>(() => parentUri(uri));
+  const [cursorUri, setCursorUri] = useState<Uri | null>(() => vfs.parent(uri));
   const [marked, setMarked] = useState<Set<Uri>>(new Set());
   const [sort, setSort] = useState<SortSpec>({ key: "name", direction: "asc" });
   // Horizontal stride reported by the active view. 0 = no horizontal nav
@@ -97,10 +116,10 @@ export function Panel({
   useEffect(() => {
     const prev = prevUriRef.current;
     if (prev !== uri) {
-      if (uri === parentUri(prev)) {
+      if (uri === vfs.parent(prev)) {
         setCursorUri(prev);
       } else {
-        setCursorUri(parentUri(uri));
+        setCursorUri(vfs.parent(uri));
       }
       setMarked(new Set());
     }
@@ -110,7 +129,7 @@ export function Panel({
   // Build rows: synthetic [..] first (omitted at root), then directories
   // (always alphabetical regardless of sort mode), then files sorted per `sort`.
   const rows = useMemo<Row[]>(() => {
-    const parent = parentUri(uri);
+    const parent = vfs.parent(uri);
     const atRoot = parent === uri;
     const dirs: Stat[] = [];
     const files: Stat[] = [];
@@ -276,7 +295,7 @@ export function Panel({
     r.register({
       id: "panel.up",
       title: "Backspace",
-      run: () => navigate(parentUri(uri)),
+      run: () => navigate(vfs.parent(uri)),
     });
     r.register({
       id: "panel.toggleMark",
@@ -346,7 +365,7 @@ export function Panel({
           nextQuery = quickQuery.slice(0, -1);
         } else {
           // Empty query: Backspace navigates up.
-          navigate(parentUri(uri));
+          navigate(vfs.parent(uri));
           return;
         }
       } else if (e.key.length === 1 && e.key !== " ") {
@@ -384,6 +403,18 @@ export function Panel({
   rowsRef.current = rows;
   const markedRef = useRef(marked);
   markedRef.current = marked;
+  // Refs so the document-level mouse handlers can build a drag payload without
+  // re-subscribing on every entries/uri change.
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const uriRef = useRef(uri);
+  uriRef.current = uri;
+  const onFileDragStartRef = useRef(onFileDragStart);
+  onFileDragStartRef.current = onFileDragStart;
+  // Pending left-press: set on left mousedown over a row, promoted to a drag
+  // once the pointer moves past the threshold while the button is held.
+  const leftPressRef = useRef<{ x: number; y: number; rowIndex: number } | null>(null);
+  const draggingRef = useRef(false);
   // Drag-select state: anchor (mousedown row), range = cumulative [lo, hi]
   // touched so far, mode determined at anchor (toggle direction).
   const dragSelectRef = useRef<{
@@ -543,7 +574,37 @@ export function Panel({
       autoScrollRafRef.current = requestAnimationFrame(tick);
     };
 
+    // Build the drag payload from the current marked set (preferred) or, if
+    // nothing is marked, the pressed row's own item. [..] cannot be dragged.
+    const DRAG_THRESHOLD = 5;
+    const beginFileDrag = (pressRowIndex: number): void => {
+      const markedStats = entriesRef.current.filter((s) => markedRef.current.has(s.uri));
+      let items: FileDragItem[];
+      if (markedStats.length > 0) {
+        items = markedStats.map((s) => ({ uri: s.uri, name: s.name, isDir: s.kind === "dir" }));
+      } else {
+        const row = rowsRef.current[pressRowIndex];
+        if (!row || row.kind === "parent") return; // can't drag [..]
+        items = [{ uri: row.stat.uri, name: row.stat.name, isDir: row.stat.kind === "dir" }];
+      }
+      if (items.length === 0) return;
+      draggingRef.current = true;
+      onFileDragStartRef.current?.({
+        sourcePanel: panelIndex,
+        sourceDir: uriRef.current,
+        items,
+        itemUris: new Set(items.map((i) => i.uri)),
+      });
+    };
+
     const onMouseDown = (e: MouseEvent): void => {
+      if (e.button === 0) {
+        // Left press over a row arms a potential drag (cursor move itself is
+        // handled by the row's own mousedown handler in the view).
+        const idx = findRowIndex(e.target);
+        if (idx >= 0) leftPressRef.current = { x: e.clientX, y: e.clientY, rowIndex: idx };
+        return;
+      }
       if (e.button !== 2) return;
       const idx = findRowIndex(e.target);
       if (idx < 0) return;
@@ -561,6 +622,15 @@ export function Panel({
       applyRange(idx, idx, mode);
     };
     const onMouseMove = (e: MouseEvent): void => {
+      // Promote an armed left-press into a file drag once moved past threshold.
+      const lp = leftPressRef.current;
+      if (lp && !draggingRef.current && (e.buttons & 1) !== 0) {
+        if (Math.abs(e.clientX - lp.x) > DRAG_THRESHOLD || Math.abs(e.clientY - lp.y) > DRAG_THRESHOLD) {
+          const rowIndex = lp.rowIndex;
+          leftPressRef.current = null;
+          beginFileDrag(rowIndex);
+        }
+      }
       if (!dragSelectRef.current) return;
       lastMouseRef.current = { x: e.clientX, y: e.clientY };
       const idx = findRowIndex(e.target);
@@ -581,6 +651,10 @@ export function Panel({
       }
     };
     const onMouseUp = (e: MouseEvent): void => {
+      if (e.button === 0) {
+        leftPressRef.current = null;
+        draggingRef.current = false;
+      }
       if (e.button === 2) {
         dragSelectRef.current = null;
         stopAutoScroll();
@@ -602,7 +676,7 @@ export function Panel({
       document.removeEventListener("contextmenu", onContextMenu, true);
       stopAutoScroll();
     };
-  }, [findRowIndex, applyRange, extendRangeTo, setCursor, onFocus, findScroller, testID]);
+  }, [findRowIndex, applyRange, extendRangeTo, setCursor, onFocus, findScroller, testID, panelIndex]);
 
   // RN-Web's Pressable defaults to tabIndex=0 (role=button) — making it a
   // focus target so Space/Enter pressed afterwards activate the Pressable
@@ -618,14 +692,30 @@ export function Panel({
   // panel, e.g. the view switcher).
   void onCreateTab;
 
+  // data-panel-index / data-panel-dir let the cross-panel drag manager resolve
+  // which panel (and which directory) the pointer is over via elementFromPoint.
+  const panelDropAttrs = {
+    dataSet: { panelIndex, panelDir: uri },
+  } as unknown as object;
+
   return (
     <Pressable
       onPress={onFocus}
       {...nonFocusable}
+      {...panelDropAttrs}
       style={[styles.container, focused && styles.focused]}
       testID={testID}
     >
-      <DriveBar uri={uri} info={driveInfo} onNavigate={navigate} testID={`${testID}-drivebar`} />
+      <DriveBar
+        uri={uri}
+        info={driveInfo}
+        driveGroups={driveGroups}
+        onNavigate={navigate}
+        parentOf={(u) => vfs.parent(u)}
+        open={driveBarOpen}
+        onOpenChange={onDriveBarOpenChange}
+        testID={`${testID}-drivebar`}
+      />
       {tabs && tabs.items.length > 1 ? (
         <TabBar
           tabs={tabs.items}
@@ -663,6 +753,7 @@ export function Panel({
             toggleMarkAt(i);
           }}
           onColumnStride={setColumnStride}
+          dropHighlightUri={dropHighlightUri}
           testID={`${testID}-list`}
         />
       )}

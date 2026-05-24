@@ -23,7 +23,8 @@ const FullRow = memo(FullRowImpl, (a, b) => {
     a.flatIndex === b.flatIndex &&
     a.isCursor === b.isCursor &&
     a.focused === b.focused &&
-    a.isMarked === b.isMarked
+    a.isMarked === b.isMarked &&
+    a.isDropTarget === b.isDropTarget
   );
 });
 
@@ -39,6 +40,7 @@ function FullBody(props: FileListViewProps): JSX.Element {
     onActivate,
     onChangeSort,
     onToggleMark,
+    dropHighlightUri,
     testID,
   } = props;
   const listRef = useRef<FlatList<Row> | null>(null);
@@ -72,6 +74,7 @@ function FullBody(props: FileListViewProps): JSX.Element {
               isCursor={index === cursor}
               focused={focused}
               isMarked={item.kind === "entry" ? marked.has(item.stat.uri) : false}
+              isDropTarget={dropHighlightUri != null && rowUri === dropHighlightUri}
               onPress={() => onCursorMove(rowUri)}
               onDoublePress={() => {
                 onCursorMove(rowUri);
@@ -99,6 +102,7 @@ function FullRowImpl({
   isCursor,
   focused,
   isMarked,
+  isDropTarget,
   onPress,
   onDoublePress,
   onContextMenu,
@@ -108,6 +112,7 @@ function FullRowImpl({
   isCursor: boolean;
   focused: boolean;
   isMarked: boolean;
+  isDropTarget: boolean;
   onPress: () => void;
   onDoublePress: () => void;
   onContextMenu?: () => void;
@@ -116,6 +121,7 @@ function FullRowImpl({
   const isDir = isParent || (row.kind === "entry" && row.stat.kind === "dir");
   const hidden = row.kind === "entry" && row.stat.hidden === true;
   const exec = row.kind === "entry" && row.stat.exec === true;
+  const rowUri = isParent ? row.uri : row.stat.uri;
   const { bg, text, outline } = rowColors({ isCursor, focused, marked: isMarked, hidden });
 
   let name: string;
@@ -159,7 +165,7 @@ function FullRowImpl({
       downHandledRef.current = true;
       handlePress();
     },
-    dataSet: { rowIndex: flatIndex },
+    dataSet: { rowIndex: flatIndex, dropUri: rowUri, dropKind: isDir ? "dir" : "file" },
   } as unknown as object;
   const fallbackPress = (): void => {
     if (downHandledRef.current) {
@@ -177,7 +183,15 @@ function FullRowImpl({
       style={[
         styles.row,
         { backgroundColor: bg, height: ROW_HEIGHT },
-        outline !== "none"
+        // Drop target border (black) wins over the cursor outline (blue).
+        isDropTarget
+          ? ({
+              outlineWidth: 1,
+              outlineStyle: "solid",
+              outlineColor: "#000000",
+              outlineOffset: -1,
+            } as object)
+          : outline !== "none"
           ? ({
               outlineWidth: 1,
               outlineStyle: "solid",

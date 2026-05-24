@@ -12,12 +12,14 @@ import {
   Panel,
   TwoPanelLayout,
   tcTheme,
+  useFileDrag,
   useGlobalHotkeys,
   type FKeyAction,
+  type FileDropDescriptor,
   type PanelSelection,
   type TabSpec,
 } from "@bc/ui-rn";
-import type { Uri, VfsRegistry } from "@bc/vfs";
+import type { DriveGroup, Uri, VfsRegistry } from "@bc/vfs";
 
 export interface AppProps {
   vfs: VfsRegistry;
@@ -44,17 +46,17 @@ const FKEY_COMMANDS: Record<string, string> = {
 const INITIAL_LEFT_TABS: PanelTabState = {
   activeId: "L1",
   tabs: [
-    { id: "L1", uri: "mock:///" },
-    { id: "L2", uri: "mock:///home/user/projects" },
-    { id: "L3", uri: "mock:///etc" },
+    { id: "L1", uri: "file:///C:/" },
+    { id: "L2", uri: "mock:///" },
+    { id: "L3", uri: "mock:///home/user/projects" },
   ],
 };
 const INITIAL_RIGHT_TABS: PanelTabState = {
   activeId: "R1",
   tabs: [
-    { id: "R1", uri: "mock:///home/user" },
-    { id: "R2", uri: "mock:///home/user/photos" },
-    { id: "R3", uri: "mock:///var/log" },
+    { id: "R1", uri: "file:///C:/" },
+    { id: "R2", uri: "mock:///home/user" },
+    { id: "R3", uri: "mock:///home/user/photos" },
   ],
 };
 
@@ -64,10 +66,52 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
   const [activeIndex, setActiveIndex] = useState<PanelIndex>(0);
   const [leftViewId, setLeftViewId] = useState<string>("brief");
   const [rightViewId, setRightViewId] = useState<string>("brief");
+  const [driveGroups, setDriveGroups] = useState<readonly DriveGroup[]>([]);
+  // `null` = neither dropdown open. Mutual-exclusive so the two panels don't
+  // both float dropdowns over the layout. Alt+F1 / Alt+F2 toggle these.
+  const [openDrivebar, setOpenDrivebar] = useState<PanelIndex | null>(null);
+
+  // Boot-time drive enumeration. Plugin order is preserved; each group becomes
+  // a section in the DriveBar combo separated by a horizontal rule.
+  useEffect(() => {
+    let cancelled = false;
+    vfs.drives().then(
+      (g) => {
+        if (!cancelled) setDriveGroups(g);
+      },
+      (err) => console.warn("drives() failed:", err),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [vfs]);
   const setActiveViewId = (id: string): void => {
     if (activeIndex === 0) setLeftViewId(id);
     else setRightViewId(id);
   };
+
+  // File drag-and-drop. The controller spans both panels (a drag started in
+  // one can drop in the other). On a valid drop it opens a confirm dialog —
+  // the actual copy/move/link backend isn't wired yet (same stub stage as F5).
+  const onFileDrop = useCallback(
+    (d: FileDropDescriptor): void => {
+      const verb = d.effect === "copy" ? "Copy" : d.effect === "move" ? "Move" : "Link";
+      const names = d.items.map((i) => (i.isDir ? `[${i.name}]` : i.name)).join("\n  ");
+      surfaces.open(
+        ({ handle }: { handle: SurfaceHandle }) => (
+          <PlaceholderBody
+            title={`${verb} ${d.items.length} item(s) (stub)`}
+            text={`From: ${d.sourceDir}\nTo:   ${d.targetDir}\n\n  ${names}\n\nThe real ${verb.toLowerCase()} process lands once write-capable FS ops exist.`}
+            onClose={handle.close}
+          />
+        ),
+        { kind: "modal", title: `${verb} — drag & drop` },
+      );
+    },
+    [surfaces],
+  );
+  const drag = useFileDrag(onFileDrop);
+  const dropTarget = drag.dropTarget;
 
   const leftUri = activeTabUri(leftTabs);
   const rightUri = activeTabUri(rightTabs);
@@ -128,6 +172,15 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
       if ((e.key === "w" || e.key === "W") && (isCtrl || isAlt)) {
         e.preventDefault();
         closeActiveTab(activeIndex);
+        return;
+      }
+      // Alt+F1 / Alt+F2 toggle the drive-bar combo of left / right panel
+      // (classic TC binding). Each toggle also focuses that panel.
+      if ((e.key === "F1" || e.key === "F2") && isAlt) {
+        e.preventDefault();
+        const side: PanelIndex = e.key === "F1" ? 0 : 1;
+        setOpenDrivebar((cur) => (cur === side ? null : side));
+        setActiveIndex(side);
         return;
       }
     };
@@ -264,6 +317,12 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
               leftSel.current = sel;
             }}
             driveInfo="[Local Disk]   mock filesystem"
+            driveGroups={driveGroups}
+            driveBarOpen={openDrivebar === 0}
+            onDriveBarOpenChange={(o) => setOpenDrivebar(o ? 0 : null)}
+            panelIndex={0}
+            onFileDragStart={drag.begin}
+            dropHighlightUri={dropTarget?.panelIndex === 0 ? dropTarget.highlightUri : null}
             onCreateTab={() => newTab(0)}
             tabs={{
               items: leftTabs.tabs,
@@ -287,6 +346,12 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
               rightSel.current = sel;
             }}
             driveInfo="[Local Disk]   mock filesystem"
+            driveGroups={driveGroups}
+            driveBarOpen={openDrivebar === 1}
+            onDriveBarOpenChange={(o) => setOpenDrivebar(o ? 1 : null)}
+            panelIndex={1}
+            onFileDragStart={drag.begin}
+            dropHighlightUri={dropTarget?.panelIndex === 1 ? dropTarget.highlightUri : null}
             onCreateTab={() => newTab(1)}
             tabs={{
               items: rightTabs.tabs,

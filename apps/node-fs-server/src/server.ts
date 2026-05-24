@@ -1,8 +1,6 @@
-import { createReadStream, promises as fs, type Stats } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { basename, resolve as resolvePath } from "node:path";
 import { join as posixJoin } from "node:path/posix";
-import chokidar from "chokidar";
 import { parseUri, buildUri } from "./uri.js";
 import {
   isWindowsDrivesRoot,
@@ -11,6 +9,8 @@ import {
   uriPathToFsPath,
   type WireStat,
 } from "./fsmap.js";
+import { subscribeDir } from "./watch.js";
+import { resolveIcons } from "./icons.js";
 
 export interface StartServerOpts {
   host?: string;
@@ -96,6 +96,11 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
     case "/observe":
       handleObserve(req, res, requireUri(url));
       return true;
+    case "/icons": {
+      const keys = (url.searchParams.get("keys") ?? "").split(",").filter((k) => k.length > 0);
+      json(res, 200, await resolveIcons(keys));
+      return true;
+    }
     default:
       return false;
   }
@@ -174,10 +179,9 @@ async function handleStat(res: ServerResponse, uri: string): Promise<void> {
 
 /**
  * Stream directory-observation events as NDJSON over a long-lived connection.
- * chokidar's initial scan emits `add` per existing entry then `ready`; live
- * changes follow. depth:0 keeps it to the directory's direct children (one
- * level, matching the panel). The watcher is closed when the client
- * disconnects (browser aborts the fetch on navigate-away).
+ * Backed by a per-path shared watcher (see watch.ts): the subscriber receives
+ * the current snapshot (add* + ready) then live changes. Unsubscribes when the
+ * client disconnects, which closes the watcher once the last observer leaves.
  */
 function handleObserve(req: IncomingMessage, res: ServerResponse, uri: string): void {
   const { scheme, path: uriPath } = parseUri(uri);
@@ -199,39 +203,14 @@ function handleObserve(req: IncomingMessage, res: ServerResponse, uri: string): 
   }
 
   const fsPath = uriPathToFsPath(uriPath);
-  const rootResolved = resolvePath(fsPath);
-  const childUri = (full: string): string => {
-    const name = basename(full);
-    const childPath = uriPath.endsWith("/") ? uriPath + name : `${uriPath}/${name}`;
-    return buildUri("file", childPath);
-  };
-  const sendStat = (type: "add" | "change", full: string, st?: Stats): void => {
-    if (!st) return;
-    send({ type, stat: statToWire(basename(full), childUri(full), st) });
-  };
-
-  const watcher = chokidar.watch(fsPath, {
-    depth: 0,
-    ignoreInitial: false,
-    alwaysStat: true,
-    ignorePermissionErrors: true,
-  });
-  watcher
-    .on("add", (full, st) => sendStat("add", full, st))
-    .on("addDir", (full, st) => {
-      if (resolvePath(full) === rootResolved) return; // skip the watched root itself
-      sendStat("add", full, st);
-    })
-    .on("change", (full, st) => sendStat("change", full, st))
-    .on("unlink", (full) => send({ type: "unlink", uri: childUri(full) }))
-    .on("unlinkDir", (full) => send({ type: "unlink", uri: childUri(full) }))
-    .on("ready", () => send({ type: "ready" }))
-    .on("error", (err) => {
-      process.stderr.write(`watch error (${uri}): ${err instanceof Error ? err.message : String(err)}\n`);
-    });
-
+  const unsubscribe = subscribeDir(fsPath, uriPath, send);
+  // req and res both emit "close"; run unsubscribe exactly once so a late
+  // second call can't tear down a watcher a new subscriber just recreated.
+  let closed = false;
   const close = (): void => {
-    void watcher.close();
+    if (closed) return;
+    closed = true;
+    unsubscribe();
   };
   req.on("close", close);
   res.on("close", close);

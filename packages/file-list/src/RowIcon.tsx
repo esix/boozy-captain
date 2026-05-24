@@ -1,5 +1,5 @@
 import { createElement, type ComponentProps } from "react";
-import { View } from "react-native";
+import { Image, View } from "react-native";
 import {
   Archive,
   File,
@@ -16,6 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { Stat } from "@bc/vfs";
+import { iconKeyForStat, useFileIcon } from "./icons.js";
 import type { Row } from "./types.js";
 
 type IconC = LucideIcon;
@@ -54,13 +55,22 @@ export interface RowIconProps {
 }
 
 export function RowIcon({ row, size = 13, color = "#444" }: RowIconProps): JSX.Element {
-  let icon: IconC;
-  if (row.kind === "parent") icon = FolderUp;
-  else icon = pickIconForStat(row.stat);
-  const props: ComponentProps<IconC> = { size, color, strokeWidth: 1.75 };
+  // OS icon resolution — null for [..] (a UI affordance, not a real entry).
+  const osKey = row.kind === "parent" ? null : iconKeyForStat(row.stat);
+  const osUrl = useFileIcon(osKey);
+
   return (
     <View style={{ width: size + 4, alignItems: "center", justifyContent: "center" }}>
-      {createElement(icon as React.ComponentType<ComponentProps<IconC>>, props)}
+      {osUrl ? (
+        <Image source={{ uri: osUrl }} style={{ width: size + 2, height: size + 2 }} resizeMode="contain" />
+      ) : (
+        createElement(
+          (row.kind === "parent" ? FolderUp : pickIconForStat(row.stat)) as React.ComponentType<
+            ComponentProps<IconC>
+          >,
+          { size, color, strokeWidth: 1.75 },
+        )
+      )}
     </View>
   );
 }

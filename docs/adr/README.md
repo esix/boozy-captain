@@ -33,3 +33,4 @@ One ADR per decision. Don't edit accepted ADRs — supersede them with a new one
 | 0011 | | No hard plugin sandbox in MVP; Web Worker realm in v2 | _todo_ |
 | 0012 | | Turborepo as the monorepo orchestrator | _todo_ |
 | 0013 | | TC keybinding profile as default | _todo_ |
+| [0014](./0014-file-icons-two-tier-host-provider.md) | | File icons — bundled glyphs + per-host OS icon provider | Accepted |

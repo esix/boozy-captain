@@ -52,11 +52,17 @@ export function useDirectoryStream(vfs: VfsRegistry, uri: Uri): DirectoryStreamS
   useEffect(() => {
     let cancelled = false;
     let p: Pausable<FsEvent> | null = null;
+    // Abort is the real teardown channel: it rejects a network read blocked
+    // waiting for the next watch event. p.cancel() (iterator .return()) can't
+    // do that while the generator is suspended mid-await, so without this the
+    // /observe connection would leak and exhaust the browser's per-origin
+    // connection pool.
+    const ctrl = new AbortController();
     setState({ entries: [], loading: true, error: null });
 
     const run = async (): Promise<void> => {
       try {
-        p = pausable(vfs.observe(uri));
+        p = pausable(vfs.observe(uri, ctrl.signal));
         const buf: Stat[] = [];
         let ready = false;
         for await (const ev of p) {
@@ -70,9 +76,9 @@ export function useDirectoryStream(vfs: VfsRegistry, uri: Uri): DirectoryStreamS
         // Stream ended (fallback list adapter, or watcher closed): settle.
         if (!cancelled) setState({ entries: [...buf], loading: false, error: null });
       } catch (err) {
-        if (!cancelled) {
-          setState((s) => ({ ...s, loading: false, error: err as Error }));
-        }
+        // Abort is the normal cancellation path, not an error to surface.
+        if (cancelled || (err as { name?: string }).name === "AbortError") return;
+        setState((s) => ({ ...s, loading: false, error: err as Error }));
       }
     };
 
@@ -80,6 +86,7 @@ export function useDirectoryStream(vfs: VfsRegistry, uri: Uri): DirectoryStreamS
 
     return () => {
       cancelled = true;
+      ctrl.abort();
       p?.cancel();
     };
   }, [vfs, uri, tick]);

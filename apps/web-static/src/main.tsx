@@ -4,6 +4,7 @@ import { AppRegistry } from "react-native";
 import { HostCapabilities } from "@bc/core";
 import { createHost, registerStatic } from "@bc/plugin-host";
 import { WebSurfaceManager } from "@bc/surfaces-web";
+import { IconCache } from "@bc/file-list";
 import * as fsMockModule from "@bc/fs-mock";
 import fsMockPkg from "@bc/fs-mock/package.json" with { type: "json" };
 import * as fsHttpModule from "@bc/fs-http";
@@ -45,14 +46,22 @@ async function boot(): Promise<void> {
     }
   }
 
+  // OS file-icon cache: batches distinct keys into one GET /_fs/icons round-trip.
+  const iconCache = new IconCache(async (keys) => {
+    const url = `${FS_HTTP_BASE_URL}/icons?keys=${encodeURIComponent(keys.join(","))}`;
+    const res = await fetch(url);
+    if (!res.ok) return {};
+    return (await res.json()) as Record<string, string>;
+  });
+
   AppRegistry.registerComponent("Boozy", () => () => (
-    <App vfs={host.vfs} surfaces={surfaces} />
+    <App vfs={host.vfs} surfaces={surfaces} iconCache={iconCache} />
   ));
   const root = document.getElementById("root");
   if (!root) throw new Error("No #root element");
   createRoot(root).render(
     <StrictMode>
-      <App vfs={host.vfs} surfaces={surfaces} />
+      <App vfs={host.vfs} surfaces={surfaces} iconCache={iconCache} />
     </StrictMode>,
   );
 }

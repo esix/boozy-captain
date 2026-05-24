@@ -56,10 +56,13 @@ export interface FsPlugin {
   read?(uri: Uri): ReadableStream<Uint8Array>;
   /**
    * Observe a directory: initial scan (`add`* then `ready`) followed by live
-   * change events until the iterator is returned/cancelled. Optional — when a
-   * plugin omits it, VfsRegistry.observe() falls back to adapting list().
+   * change events until aborted. The `signal` is the cancellation channel —
+   * aborting it must promptly tear down any underlying resource (e.g. a
+   * network read blocked waiting for the next event), which an async
+   * iterator's `.return()` cannot do while suspended mid-`await`. Optional —
+   * when a plugin omits it, VfsRegistry.observe() adapts list().
    */
-  observe?(uri: Uri): AsyncIterable<FsEvent>;
+  observe?(uri: Uri, signal?: AbortSignal): AsyncIterable<FsEvent>;
   /**
    * Drives exposed by this plugin for the drive-bar combo. Schemes with no
    * drive concept (e.g. virtual / single-root filesystems) may omit this.

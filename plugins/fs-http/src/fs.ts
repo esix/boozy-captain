@@ -64,12 +64,19 @@ export class HttpFs implements FsPlugin {
 
   /**
    * Observe a directory. Opens a long-lived NDJSON connection to /observe and
-   * yields each event line. On cancellation (the async iterator is returned),
-   * the `finally` aborts the fetch, which closes the server-side watcher.
+   * yields each event line. Cancellation comes via `signal`: aborting it
+   * rejects the in-flight `reader.read()` immediately (which `.return()` on a
+   * suspended async generator cannot do), closing the connection so the
+   * server tears down its watcher.
    */
-  async *observe(uri: Uri): AsyncIterable<FsEvent> {
+  async *observe(uri: Uri, signal?: AbortSignal): AsyncIterable<FsEvent> {
     const url = `${this.baseUrl}/observe?uri=${encodeURIComponent(uri)}`;
     const ctrl = new AbortController();
+    const onAbort = (): void => ctrl.abort();
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
     try {
       const res = await fetch(url, { signal: ctrl.signal });
       if (!res.ok || !res.body) throw new Error(`observe ${uri}: HTTP ${res.status}`);
@@ -88,8 +95,13 @@ export class HttpFs implements FsPlugin {
         }
       }
       if (buf.trim().length > 0) yield JSON.parse(buf) as FsEvent;
+    } catch (err) {
+      // Abort is the normal cancellation path, not an error.
+      if ((err as { name?: string }).name === "AbortError") return;
+      throw err;
     } finally {
       ctrl.abort();
+      signal?.removeEventListener("abort", onAbort);
     }
   }
 

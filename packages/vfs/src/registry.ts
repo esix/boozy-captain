@@ -39,13 +39,14 @@ export class VfsRegistry {
    * events — the stream simply ends). Either way the consumer gets the same
    * event shape and the `ready` boundary.
    */
-  async *observe(uri: Uri): AsyncIterable<FsEvent> {
+  async *observe(uri: Uri, signal?: AbortSignal): AsyncIterable<FsEvent> {
     const plugin = this.resolve(uri);
     if (plugin.observe) {
-      yield* plugin.observe(uri);
+      yield* plugin.observe(uri, signal);
       return;
     }
     for await (const stat of plugin.list(uri)) {
+      if (signal?.aborted) return;
       yield { type: "add", stat };
     }
     yield { type: "ready" };

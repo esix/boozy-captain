@@ -61,8 +61,9 @@ export class MockFs implements FsPlugin {
    * visible in the UI without touching a real disk. Cancelling the iterator
    * (panel navigates away) ends the loop.
    */
-  async *observe(uri: Uri): AsyncIterable<FsEvent> {
+  async *observe(uri: Uri, signal?: AbortSignal): AsyncIterable<FsEvent> {
     for await (const stat of this.list(uri)) {
+      if (signal?.aborted) return;
       yield { type: "add", stat };
     }
     yield { type: "ready" };
@@ -70,7 +71,8 @@ export class MockFs implements FsPlugin {
     const liveUri = joinUri(uri, "~live.tmp");
     let present = false;
     for (;;) {
-      await sleep(this.watchDemoMs);
+      const slept = await waitOrAbort(this.watchDemoMs, signal);
+      if (!slept) return; // aborted
       present = !present;
       if (present) {
         yield {
@@ -101,6 +103,22 @@ function toStat(name: string, node: MockNode, uri: Uri): Stat {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Resolve true after `ms`, or false immediately when `signal` aborts. */
+function waitOrAbort(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(t);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 // Help the type checker realize MockDir is used (it's referenced via lookup's return)

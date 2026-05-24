@@ -14,6 +14,13 @@ export { FileListViewRegistry, createDefaultRegistry } from "./registry.js";
 export { ColumnHeader, type ColumnDef, type ColumnHeaderProps } from "./ColumnHeader.js";
 export { RowIcon, pickIconForStat, type RowIconProps } from "./RowIcon.js";
 export {
+  IconCache,
+  IconContext,
+  iconKeyForStat,
+  useFileIcon,
+  type IconFetcher,
+} from "./icons.js";
+export {
   ROW_HEIGHT,
   formatAttr,
   formatDate,

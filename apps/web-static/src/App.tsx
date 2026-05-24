@@ -19,11 +19,14 @@ import {
   type PanelSelection,
   type TabSpec,
 } from "@bc/ui-rn";
+import { IconContext, type IconCache } from "@bc/file-list";
 import type { DriveGroup, Uri, VfsRegistry } from "@bc/vfs";
 
 export interface AppProps {
   vfs: VfsRegistry;
   surfaces: WebSurfaceManager;
+  /** OS file-icon cache (Tier 2). Omit to render bundled glyphs only. */
+  iconCache?: IconCache | null;
 }
 
 type PanelIndex = 0 | 1;
@@ -60,7 +63,7 @@ const INITIAL_RIGHT_TABS: PanelTabState = {
   ],
 };
 
-export function App({ vfs, surfaces }: AppProps): JSX.Element {
+export function App({ vfs, surfaces, iconCache = null }: AppProps): JSX.Element {
   const [leftTabs, setLeftTabs] = useState<PanelTabState>(INITIAL_LEFT_TABS);
   const [rightTabs, setRightTabs] = useState<PanelTabState>(INITIAL_RIGHT_TABS);
   const [activeIndex, setActiveIndex] = useState<PanelIndex>(0);
@@ -250,6 +253,7 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
   };
 
   return (
+    <IconContext.Provider value={iconCache}>
     <View style={styles.root}>
       <AppMenu>
         <AppMenu.Menu title="Files">
@@ -372,6 +376,7 @@ export function App({ vfs, surfaces }: AppProps): JSX.Element {
       <FKeyBar actions={fkeyActions} />
       <SurfaceLayer manager={surfaces} />
     </View>
+    </IconContext.Provider>
   );
 }
 

@@ -21,7 +21,8 @@
     "test": "echo \"(no tests)\""
   },
   "dependencies": {
-    "@bc/vfs": "workspace:*"
+    "@bc/vfs": "workspace:*",
+    "chokidar": "^3.6.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.0",

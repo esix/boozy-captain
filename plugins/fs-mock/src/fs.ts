@@ -1,11 +1,23 @@
 import type { Capability } from "@bc/core";
-import { type DriveInfo, type FsPlugin, type Stat, type Uri, parseUri, buildUri, joinUri } from "@bc/vfs";
+import {
+  type DriveInfo,
+  type FsEvent,
+  type FsPlugin,
+  type Stat,
+  type Uri,
+  parseUri,
+  buildUri,
+  joinUri,
+} from "@bc/vfs";
 import { lookup, type MockDir, type MockNode } from "./fixtures.js";
 
 const DEFAULT_DELAY_MS = 50;
+const DEFAULT_WATCH_DEMO_MS = 4000;
 
 export interface MockFsOptions {
   delayMs?: number;
+  /** Interval for the synthetic watch demo (0 disables). */
+  watchDemoMs?: number;
 }
 
 export class MockFs implements FsPlugin {
@@ -13,9 +25,11 @@ export class MockFs implements FsPlugin {
   readonly capabilities: readonly Capability[] = [];
 
   private readonly delayMs: number;
+  private readonly watchDemoMs: number;
 
   constructor(opts: MockFsOptions = {}) {
     this.delayMs = opts.delayMs ?? DEFAULT_DELAY_MS;
+    this.watchDemoMs = opts.watchDemoMs ?? DEFAULT_WATCH_DEMO_MS;
   }
 
   async *list(uri: Uri): AsyncIterable<Stat> {
@@ -39,6 +53,34 @@ export class MockFs implements FsPlugin {
 
   async drives(): Promise<readonly DriveInfo[]> {
     return [{ letter: "M", label: "Mock Filesystem", uri: "mock:///", kind: "local" }];
+  }
+
+  /**
+   * Initial scan (reusing list()) + `ready`, then a synthetic watch demo:
+   * a "~live.tmp" file blinks in and out on a timer so directory-watching is
+   * visible in the UI without touching a real disk. Cancelling the iterator
+   * (panel navigates away) ends the loop.
+   */
+  async *observe(uri: Uri): AsyncIterable<FsEvent> {
+    for await (const stat of this.list(uri)) {
+      yield { type: "add", stat };
+    }
+    yield { type: "ready" };
+    if (this.watchDemoMs <= 0) return;
+    const liveUri = joinUri(uri, "~live.tmp");
+    let present = false;
+    for (;;) {
+      await sleep(this.watchDemoMs);
+      present = !present;
+      if (present) {
+        yield {
+          type: "add",
+          stat: { name: "~live.tmp", uri: liveUri, kind: "file", size: 1234, mtime: Date.now() },
+        };
+      } else {
+        yield { type: "unlink", uri: liveUri };
+      }
+    }
   }
 }
 

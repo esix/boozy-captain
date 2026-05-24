@@ -1,5 +1,14 @@
 import type { Capability } from "@bc/core";
-import { buildUri, parentUri, parseUri, type DriveInfo, type FsPlugin, type Stat, type Uri } from "@bc/vfs";
+import {
+  buildUri,
+  parentUri,
+  parseUri,
+  type DriveInfo,
+  type FsEvent,
+  type FsPlugin,
+  type Stat,
+  type Uri,
+} from "@bc/vfs";
 
 export interface HttpFsOptions {
   /** Base URL of the node-fs-server (e.g. http://127.0.0.1:7777). */
@@ -51,6 +60,37 @@ export class HttpFs implements FsPlugin {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`stat ${uri}: HTTP ${res.status}`);
     return (await res.json()) as Stat;
+  }
+
+  /**
+   * Observe a directory. Opens a long-lived NDJSON connection to /observe and
+   * yields each event line. On cancellation (the async iterator is returned),
+   * the `finally` aborts the fetch, which closes the server-side watcher.
+   */
+  async *observe(uri: Uri): AsyncIterable<FsEvent> {
+    const url = `${this.baseUrl}/observe?uri=${encodeURIComponent(uri)}`;
+    const ctrl = new AbortController();
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok || !res.body) throw new Error(`observe ${uri}: HTTP ${res.status}`);
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let nl = buf.indexOf("\n");
+        while (nl >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          if (line.length > 0) yield JSON.parse(line) as FsEvent;
+          nl = buf.indexOf("\n");
+        }
+      }
+      if (buf.trim().length > 0) yield JSON.parse(buf) as FsEvent;
+    } finally {
+      ctrl.abort();
+    }
   }
 
   /**

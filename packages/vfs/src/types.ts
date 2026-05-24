@@ -35,12 +35,31 @@ export interface DriveInfo {
   kind: DriveKind;
 }
 
+/**
+ * Directory-observation event. A single ordered stream delivers the initial
+ * scan (a run of `add`s) terminated by exactly one `ready`, then live changes.
+ * Keeping scan + watch on one channel gives a clean "initial scan complete"
+ * boundary AND guarantees a change/unlink can never precede the file's `add`.
+ */
+export type FsEvent =
+  | { type: "add"; stat: Stat }
+  | { type: "ready" }
+  | { type: "change"; stat: Stat }
+  | { type: "unlink"; uri: Uri }
+  | { type: "rename"; from: Uri; stat: Stat };
+
 export interface FsPlugin {
   readonly scheme: string;
   readonly capabilities: readonly Capability[];
   list(uri: Uri): AsyncIterable<Stat>;
   stat(uri: Uri): Promise<Stat>;
   read?(uri: Uri): ReadableStream<Uint8Array>;
+  /**
+   * Observe a directory: initial scan (`add`* then `ready`) followed by live
+   * change events until the iterator is returned/cancelled. Optional — when a
+   * plugin omits it, VfsRegistry.observe() falls back to adapting list().
+   */
+  observe?(uri: Uri): AsyncIterable<FsEvent>;
   /**
    * Drives exposed by this plugin for the drive-bar combo. Schemes with no
    * drive concept (e.g. virtual / single-root filesystems) may omit this.

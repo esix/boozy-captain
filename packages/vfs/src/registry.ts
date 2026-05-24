@@ -1,4 +1,4 @@
-import type { DriveInfo, FsPlugin, Stat, Uri } from "./types.js";
+import type { DriveInfo, FsEvent, FsPlugin, Stat, Uri } from "./types.js";
 import { parentUri, parseUri } from "./uri.js";
 
 /**
@@ -31,6 +31,24 @@ export class VfsRegistry {
 
   stat(uri: Uri): Promise<Stat> {
     return this.resolve(uri).stat(uri);
+  }
+
+  /**
+   * Observe a directory. If the plugin supports watching, delegate to it;
+   * otherwise adapt the finite list() into `add`* + a single `ready` (no live
+   * events — the stream simply ends). Either way the consumer gets the same
+   * event shape and the `ready` boundary.
+   */
+  async *observe(uri: Uri): AsyncIterable<FsEvent> {
+    const plugin = this.resolve(uri);
+    if (plugin.observe) {
+      yield* plugin.observe(uri);
+      return;
+    }
+    for await (const stat of plugin.list(uri)) {
+      yield { type: "add", stat };
+    }
+    yield { type: "ready" };
   }
 
   /**

@@ -1,6 +1,8 @@
-import { createReadStream, promises as fs } from "node:fs";
+import { createReadStream, promises as fs, type Stats } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { basename, resolve as resolvePath } from "node:path";
 import { join as posixJoin } from "node:path/posix";
+import chokidar from "chokidar";
 import { parseUri, buildUri } from "./uri.js";
 import {
   isWindowsDrivesRoot,
@@ -91,6 +93,9 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
     case "/drives":
       json(res, 200, await listDrives());
       return true;
+    case "/observe":
+      handleObserve(req, res, requireUri(url));
+      return true;
     default:
       return false;
   }
@@ -165,6 +170,71 @@ async function handleStat(res: ServerResponse, uri: string): Promise<void> {
   const st = await fs.lstat(fsPath);
   const name = uriPath === "/" ? "/" : uriPath.replace(/\/+$/, "").split("/").pop() ?? "/";
   return json(res, 200, statToWire(name, uri, st));
+}
+
+/**
+ * Stream directory-observation events as NDJSON over a long-lived connection.
+ * chokidar's initial scan emits `add` per existing entry then `ready`; live
+ * changes follow. depth:0 keeps it to the directory's direct children (one
+ * level, matching the panel). The watcher is closed when the client
+ * disconnects (browser aborts the fetch on navigate-away).
+ */
+function handleObserve(req: IncomingMessage, res: ServerResponse, uri: string): void {
+  const { scheme, path: uriPath } = parseUri(uri);
+  if (scheme !== "file") throw new Error(`Unsupported scheme: ${scheme}`);
+
+  res.writeHead(200, {
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Accel-Buffering": "no", // disable proxy buffering so events flush live
+  });
+  const send = (ev: unknown): void => {
+    if (!res.writableEnded) res.write(JSON.stringify(ev) + "\n");
+  };
+
+  // The Windows drive-list root has no real directory to watch.
+  if (isWindowsDrivesRoot(uriPath)) {
+    send({ type: "ready" });
+    return; // connection stays open; client closes it on navigate-away
+  }
+
+  const fsPath = uriPathToFsPath(uriPath);
+  const rootResolved = resolvePath(fsPath);
+  const childUri = (full: string): string => {
+    const name = basename(full);
+    const childPath = uriPath.endsWith("/") ? uriPath + name : `${uriPath}/${name}`;
+    return buildUri("file", childPath);
+  };
+  const sendStat = (type: "add" | "change", full: string, st?: Stats): void => {
+    if (!st) return;
+    send({ type, stat: statToWire(basename(full), childUri(full), st) });
+  };
+
+  const watcher = chokidar.watch(fsPath, {
+    depth: 0,
+    ignoreInitial: false,
+    alwaysStat: true,
+    ignorePermissionErrors: true,
+  });
+  watcher
+    .on("add", (full, st) => sendStat("add", full, st))
+    .on("addDir", (full, st) => {
+      if (resolvePath(full) === rootResolved) return; // skip the watched root itself
+      sendStat("add", full, st);
+    })
+    .on("change", (full, st) => sendStat("change", full, st))
+    .on("unlink", (full) => send({ type: "unlink", uri: childUri(full) }))
+    .on("unlinkDir", (full) => send({ type: "unlink", uri: childUri(full) }))
+    .on("ready", () => send({ type: "ready" }))
+    .on("error", (err) => {
+      process.stderr.write(`watch error (${uri}): ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+
+  const close = (): void => {
+    void watcher.close();
+  };
+  req.on("close", close);
+  res.on("close", close);
 }
 
 async function handleRead(res: ServerResponse, uri: string): Promise<void> {

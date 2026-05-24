@@ -13,7 +13,8 @@
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "start:web-node": "turbo run dev --filter=@bc/app-web-static"
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.0",

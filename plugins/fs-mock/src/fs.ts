@@ -1,5 +1,5 @@
 import type { Capability } from "@bc/core";
-import { type FsPlugin, type Stat, type Uri, parseUri, buildUri, joinUri } from "@bc/vfs";
+import { type DriveInfo, type FsPlugin, type Stat, type Uri, parseUri, buildUri, joinUri } from "@bc/vfs";
 import { lookup, type MockDir, type MockNode } from "./fixtures.js";
 
 const DEFAULT_DELAY_MS = 50;
@@ -35,6 +35,10 @@ export class MockFs implements FsPlugin {
     if (!node) throw new Error(`Not found: ${uri}`);
     const name = path === "/" ? "/" : path.replace(/\/+$/, "").split("/").pop() ?? "/";
     return toStat(name, node, buildUri("mock", path));
+  }
+
+  async drives(): Promise<readonly DriveInfo[]> {
+    return [{ letter: "M", label: "Mock Filesystem", uri: "mock:///", kind: "local" }];
   }
 }
 

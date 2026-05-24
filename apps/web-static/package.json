@@ -14,6 +14,7 @@
   "dependencies": {
     "@bc/core": "workspace:*",
     "@bc/file-list": "workspace:*",
+    "@bc/fs-http": "workspace:*",
     "@bc/fs-mock": "workspace:*",
     "@bc/plugin-host": "workspace:*",
     "@bc/surfaces": "workspace:*",
@@ -25,6 +26,7 @@
     "react-native-web": "^0.19.13"
   },
   "devDependencies": {
+    "@bc/app-node-fs-server": "workspace:*",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

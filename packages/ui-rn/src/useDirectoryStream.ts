@@ -60,25 +60,39 @@ export function useDirectoryStream(vfs: VfsRegistry, uri: Uri): DirectoryStreamS
     const ctrl = new AbortController();
     setState({ entries: [], loading: true, error: null });
 
+    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+    // Reconnect loop. The server keeps /observe open indefinitely, so a
+    // stream-end (or transient error) means the connection dropped — a server
+    // restart, or a watcher glitch the server tore down. Re-subscribe instead
+    // of settling. A fresh subscription replays the whole snapshot; once we've
+    // had a successful scan, we keep the current entries visible and only
+    // commit the new snapshot at `ready`, so a reconnect never flashes the
+    // panel empty. (Initial connection still streams incrementally.)
     const run = async (): Promise<void> => {
-      try {
-        p = pausable(vfs.observe(uri, ctrl.signal));
+      let connected = false;
+      let attempt = 0;
+      while (!cancelled) {
         const buf: Stat[] = [];
         let ready = false;
-        for await (const ev of p) {
-          if (cancelled) return;
-          applyEvent(buf, ev);
-          if (ev.type === "ready") ready = true;
-          // During the initial scan loading stays true; from `ready` on it is
-          // false (the directory is "settled" even though the watch lives on).
-          setState({ entries: [...buf], loading: !ready, error: null });
+        try {
+          p = pausable(vfs.observe(uri, ctrl.signal));
+          for await (const ev of p) {
+            if (cancelled) return;
+            applyEvent(buf, ev);
+            if (ev.type === "ready") ready = true;
+            if (!connected || ready) {
+              setState({ entries: [...buf], loading: !connected && !ready, error: null });
+            }
+            if (ready) connected = true;
+          }
+        } catch (err) {
+          if (cancelled || (err as { name?: string }).name === "AbortError") return;
+          // transient — fall through to reconnect, keeping current entries.
         }
-        // Stream ended (fallback list adapter, or watcher closed): settle.
-        if (!cancelled) setState({ entries: [...buf], loading: false, error: null });
-      } catch (err) {
-        // Abort is the normal cancellation path, not an error to surface.
-        if (cancelled || (err as { name?: string }).name === "AbortError") return;
-        setState((s) => ({ ...s, loading: false, error: err as Error }));
+        if (cancelled) return;
+        attempt = ready ? 1 : attempt + 1;
+        await sleep(Math.min(2000, 250 * attempt));
       }
     };
 

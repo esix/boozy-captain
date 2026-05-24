@@ -195,6 +195,9 @@ function handleObserve(req: IncomingMessage, res: ServerResponse, uri: string): 
   const send = (ev: unknown): void => {
     if (!res.writableEnded) res.write(JSON.stringify(ev) + "\n");
   };
+  const end = (): void => {
+    if (!res.writableEnded) res.end();
+  };
 
   // The Windows drive-list root has no real directory to watch.
   if (isWindowsDrivesRoot(uriPath)) {
@@ -203,7 +206,7 @@ function handleObserve(req: IncomingMessage, res: ServerResponse, uri: string): 
   }
 
   const fsPath = uriPathToFsPath(uriPath);
-  const unsubscribe = subscribeDir(fsPath, uriPath, send);
+  const unsubscribe = subscribeDir(fsPath, uriPath, { send, end });
   // req and res both emit "close"; run unsubscribe exactly once so a late
   // second call can't tear down a watcher a new subscriber just recreated.
   let closed = false;

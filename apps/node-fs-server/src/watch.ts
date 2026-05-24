@@ -12,6 +12,12 @@ export type WatchEvent =
 
 type Send = (ev: WatchEvent) => void;
 
+/** A connected observer. `end` closes its response so the client reconnects. */
+export interface Subscriber {
+  send: Send;
+  end: () => void;
+}
+
 /**
  * One chokidar watcher per directory, shared by all observers (panels) of that
  * path. Two watchers on the same path share OS watch state and stomp on each
@@ -25,8 +31,9 @@ class DirWatch {
   private readonly watcher: FSWatcher;
   private readonly entries = new Map<string, WireStat>(); // child uri -> stat
   private ready = false;
-  private readonly subs = new Set<Send>();
+  private readonly subs = new Set<Subscriber>();
   private readonly rootResolved: string;
+  private destroyed = false;
 
   constructor(
     fsPath: string,
@@ -56,7 +63,20 @@ class DirWatch {
         process.stderr.write(
           `watch error (${this.uriPath}): ${err instanceof Error ? err.message : String(err)}\n`,
         );
+        // A glitched watcher is unreliable — tear it down and end every
+        // observer's stream. Clients treat stream-end as "reconnect", so they
+        // come back to a freshly-scanned watcher rather than a stale/empty one.
+        this.destroy();
       });
+  }
+
+  private destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    for (const sub of this.subs) sub.end();
+    this.subs.clear();
+    void this.watcher.close();
+    this.onEmpty();
   }
 
   private childUri(full: string): string {
@@ -80,19 +100,19 @@ class DirWatch {
   }
 
   private broadcast(ev: WatchEvent): void {
-    for (const send of this.subs) send(ev);
+    for (const sub of this.subs) sub.send(ev);
   }
 
   /** Replay the snapshot to a new subscriber, then stream live events. */
-  subscribe(send: Send): () => void {
+  subscribe(sub: Subscriber): () => void {
     // Synchronous (no await) so a chokidar callback can't interleave between
     // the snapshot replay and registration — no missed or duplicated events.
-    for (const stat of this.entries.values()) send({ type: "add", stat });
-    if (this.ready) send({ type: "ready" });
-    this.subs.add(send);
+    for (const stat of this.entries.values()) sub.send({ type: "add", stat });
+    if (this.ready) sub.send({ type: "ready" });
+    this.subs.add(sub);
     return () => {
-      this.subs.delete(send);
-      if (this.subs.size === 0) {
+      this.subs.delete(sub);
+      if (this.subs.size === 0 && !this.destroyed) {
         void this.watcher.close();
         this.onEmpty();
       }
@@ -107,12 +127,12 @@ const watches = new Map<string, DirWatch>();
  * Returns an unsubscribe function that closes the watcher when no subscribers
  * remain.
  */
-export function subscribeDir(fsPath: string, uriPath: string, send: Send): () => void {
+export function subscribeDir(fsPath: string, uriPath: string, sub: Subscriber): () => void {
   const key = resolvePath(fsPath);
   let w = watches.get(key);
   if (!w) {
     w = new DirWatch(fsPath, uriPath, () => watches.delete(key));
     watches.set(key, w);
   }
-  return w.subscribe(send);
+  return w.subscribe(sub);
 }

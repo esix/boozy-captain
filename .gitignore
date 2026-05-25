@@ -5,6 +5,8 @@ node_modules/
 dist/
 build/
 .turbo/
+.next/
+.expo/
 *.tsbuildinfo
 
 # Yarn Berry (using node_modules linker — we do NOT commit .pnp.*)
@@ -18,6 +20,9 @@ build/
 
 # Vite
 .vite/
+
+# Playwright MCP session output (snapshots, screenshots, console logs)
+.playwright-mcp/
 
 # Debug
 npm-debug.*

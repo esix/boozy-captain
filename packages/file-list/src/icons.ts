@@ -11,14 +11,22 @@ import { parseUri, type Stat, type Uri } from "@bc/vfs";
  * Keys (cache granularity):
  *   - "dir"           one shared folder icon
  *   - "ext:.<ext>"    one icon per file type (most files)
- *   - "path:<uri>"    per-file icon for exe/lnk/ico (their icon is embedded)
+ *   - "path:<uri>"    per-file icon for files whose icon is embedded in the
+ *                     file itself (exe/lnk/ico) or the bundle (macOS .app)
  */
 
 const PER_FILE_EXT = new Set(["exe", "lnk", "ico"]);
 
 /** Cache key for a stat, or null when no OS icon should be requested. */
 export function iconKeyForStat(stat: Stat): string | null {
-  if (stat.kind === "dir") return "dir";
+  if (stat.kind === "dir") {
+    // macOS .app bundles are directories, but each carries its own icon — so
+    // resolve them per-path (like exe/lnk) rather than as a generic folder.
+    if (schemeOf(stat.uri) === "file" && /\.app$/i.test(stat.name)) {
+      return `path:${stat.uri}`;
+    }
+    return "dir";
+  }
   if (stat.kind !== "file") return null;
   const dot = stat.name.lastIndexOf(".");
   const ext = dot > 0 ? stat.name.slice(dot + 1).toLowerCase() : "";

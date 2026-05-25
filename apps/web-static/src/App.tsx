@@ -46,10 +46,17 @@ const FKEY_COMMANDS: Record<string, string> = {
   "Alt+F4": "fkey.exit",
 };
 
+// Placeholder for the local-disk tab at first paint. The real default `file:`
+// location is platform-specific (drive root on Windows, `/` on macOS/Linux),
+// so the server is the source of truth: once `drives()` resolves we rewrite any
+// tab still on this placeholder to the first `file:` drive it reports. Hardcoding
+// `C:` here left the panel empty on POSIX hosts.
+const INITIAL_FILE_URI = "file:///C:/";
+
 const INITIAL_LEFT_TABS: PanelTabState = {
   activeId: "L1",
   tabs: [
-    { id: "L1", uri: "file:///C:/" },
+    { id: "L1", uri: INITIAL_FILE_URI },
     { id: "L2", uri: "mock:///" },
     { id: "L3", uri: "mock:///home/user/projects" },
   ],
@@ -57,7 +64,7 @@ const INITIAL_LEFT_TABS: PanelTabState = {
 const INITIAL_RIGHT_TABS: PanelTabState = {
   activeId: "R1",
   tabs: [
-    { id: "R1", uri: "file:///C:/" },
+    { id: "R1", uri: INITIAL_FILE_URI },
     { id: "R2", uri: "mock:///home/user" },
     { id: "R3", uri: "mock:///home/user/photos" },
   ],
@@ -88,6 +95,24 @@ export function App({ vfs, surfaces, iconCache = null }: AppProps): JSX.Element 
       cancelled = true;
     };
   }, [vfs]);
+
+  // Seed local-disk tabs from the host's actual first `file:` drive once drives
+  // resolve — replaces the Windows-only `file:///C:/` placeholder so the panel
+  // lands on a real directory on every platform (e.g. `file:///` on macOS).
+  const fileTabsSeeded = useRef(false);
+  useEffect(() => {
+    if (fileTabsSeeded.current || driveGroups.length === 0) return;
+    const fileRoot = driveGroups.find((g) => g.scheme === "file")?.drives[0]?.uri;
+    if (!fileRoot || fileRoot === INITIAL_FILE_URI) return;
+    fileTabsSeeded.current = true;
+    const reseed = (prev: PanelTabState): PanelTabState => ({
+      ...prev,
+      tabs: prev.tabs.map((t) => (t.uri === INITIAL_FILE_URI ? { ...t, uri: fileRoot } : t)),
+    });
+    setLeftTabs(reseed);
+    setRightTabs(reseed);
+  }, [driveGroups]);
+
   const setActiveViewId = (id: string): void => {
     if (activeIndex === 0) setLeftViewId(id);
     else setRightViewId(id);

@@ -67,16 +67,22 @@ image arrives, then swaps to it.
 The provider is **transport-agnostic**; only the wiring is host-specific:
 
 - **Web** (current): the node-fs sidecar exposes `GET /icons?keys=…` returning
-  `{ key: dataURL }`. Windows extraction batches one PowerShell run that
-  P/Invokes `SHGetFileInfo` — `SHGFI_USEFILEATTRIBUTES` for `ext:`/`dir` (no
-  real file needed), the real path for `path:` — converts the `HICON` to a
-  16px PNG, base64-encodes, and caches in memory by key. The app injects a
+  `{ key: dataURL }`, dispatching to the host OS's extractor. The app injects a
   fetcher into `IconCache` and provides it via `IconContext`.
+  - **Windows**: one batched PowerShell run that P/Invokes `SHGetFileInfo` —
+    `SHGFI_USEFILEATTRIBUTES` for `ext:`/`dir` (no real file needed), the real
+    path for `path:` — converts the `HICON` to a 16px PNG and base64-encodes it.
+  - **macOS**: one batched `osascript -l JavaScript` (JXA) run that asks
+    `NSWorkspace` for each icon (`NSImageNameFolder` for `dir`,
+    `iconForFileType:` for `ext:`, `iconForFile:` for `path:`), rasterizes onto
+    a 16px canvas, and emits `{ id: base64png }`. `.app` bundles are `dir`
+    entries but resolve per-`path:` so each shows its own bundle icon. Needs a
+    WindowServer connection (drawing) — i.e. the server runs in the user's GUI
+    session, the same desktop constraint as the Windows shell APIs.
 - **Electron** (future): provider calls `app.getFileIcon(path).toPNG()`; no
   sidecar.
 - **fx-shell** (future): XPCOM / `moz-icon://` URIs.
-- **macOS/Linux node host** (future): `NSWorkspace` via a helper, or XDG icon
-  theme lookup.
+- **Linux node host** (future): XDG icon theme + MIME lookup (`gio` / freedesktop).
 - **Terminal / mobile** (future): no provider → Tier 1 only.
 
 ## Consequences
@@ -87,15 +93,16 @@ The provider is **transport-agnostic**; only the wiring is host-specific:
   batched, and off the render path.
 - **Icons are host-injected, not plugin-coupled.** `RowIcon` stays
   platform-agnostic; a host with no provider degrades cleanly to glyphs.
-- **Windows-only Tier 2 today.** We shipped the Windows web path first; macOS,
-  Linux, Electron, fx-shell each need their own provider impl. The contract and
-  the client cache are written once and reused — only the fetcher/extractor is
-  per-host.
-- **PowerShell cost & fidelity ceiling.** Process startup is slow, so we batch
-  per request; `ExtractAssociatedIcon`/`SHGetFileInfo` give ~16–32px associated
-  icons but **no thumbnails and no hi-DPI**. Upgrading to a native addon or a
-  C# helper calling `IShellItemImageFactory::GetImage` is a later, isolated
-  change behind the same provider contract.
+- **Windows + macOS Tier 2 today.** Both web paths ship; Linux, Electron, and
+  fx-shell still need their own provider impl. The contract and the client cache
+  are written once and reused — only the per-host fetcher/extractor differs, and
+  `resolveIcons` simply dispatches on `platform()`.
+- **Subprocess cost & fidelity ceiling.** Process startup is slow on both hosts
+  (PowerShell, `osascript`), so we batch one run per request. The shell APIs
+  give ~16–32px associated icons but **no thumbnails and no hi-DPI**. Upgrading
+  to a native addon (Windows `IShellItemImageFactory::GetImage`; macOS
+  `iconForFile` at a larger `NSSize` or `QLThumbnailGenerator`) is a later,
+  isolated change behind the same provider contract.
 - **Proprietary-asset constraint.** Extracted OS icons (and `shell32` system
   icons) are platform assets — fine to render locally for the user, but they
   **must never be committed or redistributed**. The cache lives in memory / a

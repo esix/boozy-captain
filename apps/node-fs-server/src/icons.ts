@@ -8,19 +8,23 @@ import { parseUri } from "./uri.js";
 import { uriPathToFsPath } from "./fsmap.js";
 
 /**
- * Windows file-icon extraction (Tier 2). Resolves the Explorer icon for a
- * cache key to a 16px PNG data URL via a single batched PowerShell run that
- * P/Invokes SHGetFileInfo:
- *   - `dir`            → system folder icon (SHGFI_USEFILEATTRIBUTES + DIRECTORY)
- *   - `ext:<.ext>`     → file-type icon, no real file needed (USEFILEATTRIBUTES)
- *   - `path:<uri>`     → the file's own icon (exe/lnk/ico embedded), real path
+ * Native file-icon extraction (Tier 2). Resolves the OS file-manager icon for a
+ * cache key to a 16px PNG data URL via a single batched subprocess run. Two
+ * host backends, one contract:
+ *   - Windows — PowerShell P/Invoking SHGetFileInfo.
+ *   - macOS   — `osascript -l JavaScript` (JXA) driving NSWorkspace.
+ * Both resolve the same three key kinds:
+ *   - `dir`            → system folder icon (no real file needed)
+ *   - `ext:<.ext>`     → file-type icon, no real file needed
+ *   - `path:<uri>`     → the file's own icon (exe/lnk/ico or .app), real path
  *
  * Results are cached in memory by key; concurrent requests for the same key
- * share one extraction. Icons are Windows assets — kept only in memory / a
- * temp dir, never persisted into the repo.
+ * share one extraction. Extracted icons are proprietary OS assets — kept only
+ * in memory / a temp dir, never persisted into the repo (see ADR-0014).
  */
 
 const IS_WINDOWS = platform() === "win32";
+const IS_MAC = platform() === "darwin";
 const cache = new Map<string, string>(); // key -> data URL ("" = known-unavailable)
 
 interface Job {
@@ -48,7 +52,7 @@ function keyToJob(key: string): Job | null {
 
 export async function resolveIcons(keys: readonly string[]): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  if (!IS_WINDOWS) return out;
+  if (!IS_WINDOWS && !IS_MAC) return out; // no Tier 2 provider on this host
 
   const missing: { key: string; job: Job }[] = [];
   for (const key of keys) {
@@ -78,10 +82,15 @@ export async function resolveIcons(keys: readonly string[]): Promise<Record<stri
   return out;
 }
 
+/** Dispatch to the host's icon backend. Returns id → base64-encoded PNG. */
 async function extractBatch(jobs: Job[]): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
-  if (jobs.length === 0) return result;
+  if (jobs.length === 0) return new Map();
+  if (IS_MAC) return extractBatchMac(jobs);
+  return extractBatchWindows(jobs);
+}
 
+async function extractBatchWindows(jobs: Job[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
   const work = await fs.mkdtemp(join(tmpdir(), "bc-icons-"));
   try {
     const jobsPath = join(work, "jobs.json");
@@ -98,6 +107,33 @@ async function extractBatch(jobs: Job[]): Promise<Map<string, string>> {
         }
       }),
     );
+  } finally {
+    await fs.rm(work, { recursive: true, force: true }).catch(() => {});
+  }
+  return result;
+}
+
+/**
+ * macOS extraction via JXA. Writes the jobs to a temp file, runs one osascript
+ * pass that asks NSWorkspace for each icon, rasterizes it to a 16px PNG, and
+ * prints a `{ id: base64 }` map straight to stdout (no per-icon temp files).
+ * NSImage drawing needs a WindowServer connection, so this works when the
+ * server runs in the user's GUI session — same desktop constraint as the
+ * Windows shell APIs.
+ */
+async function extractBatchMac(jobs: Job[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const work = await fs.mkdtemp(join(tmpdir(), "bc-icons-"));
+  try {
+    const jobsPath = join(work, "jobs.json");
+    const scriptPath = join(work, "extract.js");
+    await fs.writeFile(jobsPath, JSON.stringify(jobs), "utf8");
+    await fs.writeFile(scriptPath, MAC_SCRIPT, "utf8");
+    const mapJson = await runOsascript(scriptPath, jobsPath);
+    const map = JSON.parse(mapJson || "{}") as Record<string, string>;
+    for (const [id, b64] of Object.entries(map)) {
+      if (typeof b64 === "string" && b64.length > 0) result.set(id, b64);
+    }
   } finally {
     await fs.rm(work, { recursive: true, force: true }).catch(() => {});
   }
@@ -167,6 +203,69 @@ function runPowershell(script: string): Promise<string> {
     child.on("close", (code) => {
       if (code === 0) resolve(stdout.trim());
       else reject(new Error(`powershell exited ${code}: ${stderr.trim()}`));
+    });
+  });
+}
+
+/**
+ * JXA program (run via `osascript -l JavaScript`). Reads the jobs JSON whose
+ * path is argv[0], resolves each icon through NSWorkspace, rasterizes it onto a
+ * 16px canvas (lockFocus → TIFF → PNG), and returns a `{ id: base64png }` map
+ * as the script result, which osascript writes to stdout.
+ *   - dir  → standard system folder icon (NSImageNameFolder)
+ *   - ext  → icon for a file type (iconForFileType:)
+ *   - path → the file's own icon, e.g. an .app bundle (iconForFile:)
+ */
+const MAC_SCRIPT = `
+function run(argv) {
+  ObjC.import('AppKit');
+  var ws = $.NSWorkspace.sharedWorkspace;
+  var PX = 16;
+  function readText(p) {
+    return ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(p, $.NSUTF8StringEncoding, null));
+  }
+  function iconFor(j) {
+    if (j.kind === 'dir') return $.NSImage.imageNamed($.NSImageNameFolder);
+    if (j.kind === 'ext') return ws.iconForFileType(String(j.value).replace(/^\\./, ''));
+    return ws.iconForFile(j.value);
+  }
+  function pngBase64(img) {
+    if (!img || img.isNil()) return null;
+    var out = $.NSImage.alloc.initWithSize($.NSMakeSize(PX, PX));
+    out.lockFocus;
+    $.NSGraphicsContext.currentContext.imageInterpolation = $.NSImageInterpolationHigh;
+    img.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, PX, PX), $.NSMakeRect(0, 0, 0, 0), $.NSCompositingOperationSourceOver, 1.0);
+    out.unlockFocus;
+    var tiff = out.TIFFRepresentation;
+    if (!tiff || tiff.isNil()) return null;
+    var rep = $.NSBitmapImageRep.imageRepWithData(tiff);
+    var png = rep.representationUsingTypeProperties(4 /* PNG */, $.NSDictionary.dictionary);
+    if (!png || png.isNil()) return null;
+    return ObjC.unwrap(png.base64EncodedStringWithOptions(0));
+  }
+  var jobs = JSON.parse(readText(argv[0]));
+  var res = {};
+  for (var i = 0; i < jobs.length; i++) {
+    try {
+      var b = pngBase64(iconFor(jobs[i]));
+      if (b) res[jobs[i].id] = b;
+    } catch (e) {}
+  }
+  return JSON.stringify(res);
+}
+`;
+
+function runOsascript(scriptPath: string, jobsPath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("osascript", ["-l", "JavaScript", scriptPath, jobsPath]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (b: Buffer) => (stdout += b.toString("utf8")));
+    child.stderr.on("data", (b: Buffer) => (stderr += b.toString("utf8")));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error(`osascript exited ${code}: ${stderr.trim()}`));
     });
   });
 }

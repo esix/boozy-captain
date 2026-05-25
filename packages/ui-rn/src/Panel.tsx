@@ -269,10 +269,16 @@ export function Panel({
 
   const panelRegistry = useMemo(() => {
     const r = new CommandRegistry();
+    // A "page" is one visible column of rows. In Brief (column-major) view the
+    // active view reports that height as `columnStride` (= rowsPerCol), so
+    // PageUp/Down advance exactly one column — landing the cursor on the file
+    // in the next/previous column, as in TC. Single-column views report 0, so
+    // fall back to a fixed page.
+    const pageStep = columnStride > 0 ? columnStride : PAGE_SIZE;
     r.register({ id: "panel.cursorUp", title: "Up", run: () => moveCursor(-1) });
     r.register({ id: "panel.cursorDown", title: "Down", run: () => moveCursor(1) });
-    r.register({ id: "panel.cursorPageUp", title: "PgUp", run: () => moveCursor(-PAGE_SIZE) });
-    r.register({ id: "panel.cursorPageDown", title: "PgDn", run: () => moveCursor(PAGE_SIZE) });
+    r.register({ id: "panel.cursorPageUp", title: "PgUp", run: () => moveCursor(-pageStep) });
+    r.register({ id: "panel.cursorPageDown", title: "PgDn", run: () => moveCursor(pageStep) });
     r.register({
       id: "panel.cursorLeft",
       title: "Left",

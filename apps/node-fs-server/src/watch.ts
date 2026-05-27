@@ -45,9 +45,17 @@ class DirWatch {
   ) {
     this.fsPath = fsPath;
     this.rootResolved = resolvePath(fsPath);
+
+    // Initial listing comes from fs.opendir (via the reconcile pass), NOT from
+    // chokidar's own scan: chokidar's `alwaysStat` scan can choke on a single
+    // odd entry (e.g. a cloud drive's `$trash_data.cldbin` → EISDIR on lstat)
+    // and then never fire `ready`, leaving the panel empty forever. opendir is
+    // reliable and skips bad entries per-item. chokidar is attached with
+    // `ignoreInitial` so it only reports *live* changes on top of that.
+    void this.scan(true);
     this.watcher = chokidar.watch(fsPath, {
       depth: 0,
-      ignoreInitial: false,
+      ignoreInitial: true,
       alwaysStat: true,
       ignorePermissionErrors: true,
     });
@@ -57,26 +65,19 @@ class DirWatch {
         if (resolvePath(full) !== this.rootResolved) this.upsert("add", full, st);
       })
       .on("change", (full, st) => this.upsert("change", full, st))
-      // Removals are treated as a *hint*, not truth. On Windows, a chokidar
-      // watcher for a nested path (a panel navigating into a subdir of one
-      // another panel watches) can make this watcher spuriously fire `unlink`
-      // for live entries — which, taken at face value, empties the other
-      // panel. Instead of deleting on the event, re-read the directory and
-      // reconcile: a spurious unlink leaves the file on disk, so it survives.
+      // Removals are treated as a *hint*, not truth (a nested watcher can make
+      // this one spuriously fire unlink). Re-read the directory and reconcile;
+      // a spurious unlink leaves the file on disk, so it survives.
       .on("unlink", () => this.scheduleReconcile())
       .on("unlinkDir", () => this.scheduleReconcile())
-      .on("ready", () => {
-        this.ready = true;
-        this.broadcast({ type: "ready" });
-      })
       .on("error", (err) => {
+        // Log only. chokidar emits 'error' for benign per-entry problems too
+        // (EISDIR/EPERM lstat'ing an odd cloud-drive entry); tearing the
+        // watcher down on those caused a client reconnect storm. The listing
+        // is owned by scan()/reconcile, so a watch error is non-fatal.
         process.stderr.write(
           `watch error (${this.uriPath}): ${err instanceof Error ? err.message : String(err)}\n`,
         );
-        // A glitched watcher is unreliable — tear it down and end every
-        // observer's stream. Clients treat stream-end as "reconnect", so they
-        // come back to a freshly-scanned watcher rather than a stale/empty one.
-        this.destroy();
       });
   }
 
@@ -111,17 +112,19 @@ class DirWatch {
     if (this.reconcileTimer || this.destroyed) return;
     this.reconcileTimer = setTimeout(() => {
       this.reconcileTimer = null;
-      void this.reconcile();
+      void this.scan(false);
     }, 200);
   }
 
   /**
-   * Re-read the directory and bring `entries` in line with disk: emit `unlink`
-   * for entries that are really gone, `add` for ones that appeared. This is the
-   * source of truth for removals, so spurious chokidar unlinks can't empty a
-   * panel — the files are still on disk and survive the reconcile.
+   * Read the directory (fs.opendir) and bring `entries` in line with disk:
+   * emit `add` for new entries, `unlink` for ones that are really gone. Used
+   * both for the authoritative initial listing (`markReady`) and to reconcile
+   * after a chokidar removal hint — so spurious unlinks can't empty a panel
+   * (the files are still on disk and survive). Per-entry lstat errors are
+   * skipped, so one bad entry (cloud-drive specials) can't break the listing.
    */
-  private async reconcile(): Promise<void> {
+  private async scan(markReady: boolean): Promise<void> {
     if (this.destroyed || this.reconciling) return;
     this.reconciling = true;
     try {
@@ -150,11 +153,15 @@ class DirWatch {
           this.entries.set(uri, stat);
           this.broadcast({ type: "add", stat });
         } catch {
-          /* vanished between readdir and lstat — skip */
+          /* unreadable entry (e.g. $trash_data.cldbin) — skip, don't fail */
         }
       }
     } finally {
       this.reconciling = false;
+      if (markReady && !this.ready && !this.destroyed) {
+        this.ready = true;
+        this.broadcast({ type: "ready" });
+      }
     }
   }
 
@@ -171,10 +178,7 @@ class DirWatch {
     this.subs.add(sub);
     return () => {
       this.subs.delete(sub);
-      if (this.subs.size === 0 && !this.destroyed) {
-        void this.watcher.close();
-        this.onEmpty();
-      }
+      if (this.subs.size === 0) this.destroy();
     };
   }
 }

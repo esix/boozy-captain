@@ -9,6 +9,7 @@ import {
   CommandLine,
   DEFAULT_FKEY_ACTIONS,
   FKeyBar,
+  Lister,
   Panel,
   TwoPanelLayout,
   tcTheme,
@@ -153,8 +154,8 @@ export function App({ vfs, surfaces, iconCache = null }: AppProps): JSX.Element 
   );
 
   const fkeyRegistry = useMemo(
-    () => buildFkeyRegistry(surfaces, activeSelection, activeIndex),
-    [surfaces, activeSelection, activeIndex],
+    () => buildFkeyRegistry(surfaces, vfs, activeSelection, activeIndex),
+    [surfaces, vfs, activeSelection, activeIndex],
   );
   const fkeyMap: HotkeyMap = useMemo(() => FKEY_COMMANDS, []);
   useGlobalHotkeys({ map: fkeyMap, registry: fkeyRegistry });
@@ -411,6 +412,7 @@ function activeTabUri(state: PanelTabState): Uri {
 
 function buildFkeyRegistry(
   surfaces: SurfaceManager,
+  vfs: VfsRegistry,
   activeSelection: () => PanelSelection | null,
   activeIndex: PanelIndex,
 ): CommandRegistry {
@@ -419,12 +421,14 @@ function buildFkeyRegistry(
     id: "fkey.view",
     title: "View",
     run: () => {
-      const sel = activeSelection();
-      const item = sel?.cursorItem;
-      if (!item) return;
+      const item = activeSelection()?.cursorItem;
+      if (!item || item.kind !== "file") return; // F3 views files, not dirs
+      // Modal for now (easy to debug); switching to a real window later is just
+      // `kind: "window"` — the surface adapter already renders that, and the
+      // Lister content is unchanged.
       surfaces.open(
         ({ handle }: { handle: SurfaceHandle }) => (
-          <ViewPlaceholder uri={item.uri} kind={item.kind} onClose={handle.close} />
+          <Lister vfs={vfs} uri={item.uri} name={item.name} onClose={handle.close} />
         ),
         { kind: "modal", title: `View — ${item.name}` },
       );
@@ -457,28 +461,6 @@ function buildFkeyRegistry(
   r.register({ id: "fkey.delete", title: "Delete", run: () => console.log(`[F8 Delete]`) });
   r.register({ id: "fkey.exit", title: "Exit", run: () => console.log(`[Alt+F4 Exit]`) });
   return r;
-}
-
-function ViewPlaceholder({
-  uri,
-  kind,
-  onClose,
-}: {
-  uri: Uri;
-  kind: string;
-  onClose: () => void;
-}): JSX.Element {
-  return (
-    <View>
-      <Text style={styles.placeholderHeader}>F3 View — placeholder</Text>
-      <Text style={styles.placeholderText}>URI: {uri}</Text>
-      <Text style={styles.placeholderText}>Kind: {kind}</Text>
-      <Text style={styles.placeholderHint}>
-        Press Esc to close. Real lister-text plugin and file content stream land next.
-      </Text>
-      <Pressy onClose={onClose} />
-    </View>
-  );
 }
 
 function PlaceholderBody({

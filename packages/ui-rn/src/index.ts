@@ -13,6 +13,7 @@ export {
   type FKeyBarProps,
 } from "./FKeyBar.js";
 export { Icon, type IconProps } from "./Icon.js";
+export { Lister, type ListerProps, type ListerMode } from "./Lister.js";
 export {
   MenuBar,
   DEFAULT_MENUS,

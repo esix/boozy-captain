@@ -33,6 +33,13 @@ export class VfsRegistry {
     return this.resolve(uri).stat(uri);
   }
 
+  /** Read a file's bytes. Throws if the plugin doesn't support reading. */
+  read(uri: Uri): ReadableStream<Uint8Array> {
+    const plugin = this.resolve(uri);
+    if (!plugin.read) throw new Error(`Scheme does not support read: ${plugin.scheme}`);
+    return plugin.read(uri);
+  }
+
   /**
    * Observe a directory. If the plugin supports watching, delegate to it;
    * otherwise adapt the finite list() into `add`* + a single `ready` (no live

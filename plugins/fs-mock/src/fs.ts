@@ -51,6 +51,35 @@ export class MockFs implements FsPlugin {
     return toStat(name, node, buildUri("mock", path));
   }
 
+  /**
+   * Synthesize file content so the lister (and other readers) work against the
+   * mock filesystem without touching disk. Real plugins stream actual bytes.
+   */
+  read(uri: Uri): ReadableStream<Uint8Array> {
+    const { path } = parseUri(uri);
+    const node = lookup(path);
+    if (!node) throw new Error(`Not found: ${uri}`);
+    if (node.kind === "dir") throw new Error(`Is a directory: ${uri}`);
+    const name = path.replace(/\/+$/, "").split("/").pop() ?? "file";
+    const lines = [
+      `Mock file: ${name}`,
+      `URI:  ${uri}`,
+      `Size (declared): ${node.size} bytes`,
+      "",
+      "This is synthetic content from @bc/fs-mock so the lister has something",
+      "to display without a real filesystem. Lines below pad it out a bit:",
+      "",
+      ...Array.from({ length: 40 }, (_, i) => `${String(i + 1).padStart(3, "0")}  the quick brown fox jumps over the lazy dog`),
+    ];
+    const bytes = new TextEncoder().encode(lines.join("\n") + "\n");
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    });
+  }
+
   async drives(): Promise<readonly DriveInfo[]> {
     return [{ letter: "M", label: "Mock Filesystem", uri: "mock:///", kind: "local" }];
   }

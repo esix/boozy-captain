@@ -88,7 +88,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
       await handleStat(res, requireUri(url));
       return true;
     case "/read":
-      await handleRead(res, requireUri(url));
+      await handleRead(req, res, requireUri(url));
       return true;
     case "/drives":
       json(res, 200, await listDrives());
@@ -219,17 +219,86 @@ function handleObserve(req: IncomingMessage, res: ServerResponse, uri: string): 
   res.on("close", close);
 }
 
-async function handleRead(res: ServerResponse, uri: string): Promise<void> {
+async function handleRead(req: IncomingMessage, res: ServerResponse, uri: string): Promise<void> {
   const { scheme, path: uriPath } = parseUri(uri);
   if (scheme !== "file") throw new Error(`Unsupported scheme: ${scheme}`);
   const fsPath = uriPathToFsPath(uriPath);
   const st = await fs.stat(fsPath);
-  res.writeHead(200, {
-    "Content-Type": "application/octet-stream",
-    "Content-Length": String(st.size),
-    "Cache-Control": "no-store",
+  const size = st.size;
+
+  // Honor a single byte range (bytes=a-b) → 206 with just that slice, read
+  // straight off disk. This is what makes the lister able to seek into a huge
+  // / network file and only transfer the visible window.
+  const range = parseRange(req.headers["range"], size);
+  if (range === "unsatisfiable") {
+    res.writeHead(416, { "Content-Range": `bytes */${size}`, "Cache-Control": "no-store" });
+    res.end();
+    return;
+  }
+
+  const opts = range ? { start: range.start, end: range.end } : {};
+  const stream = createReadStream(fsPath, opts);
+  // stat() can succeed while open() fails (locked/permission-denied system
+  // files like C:\DumpStack.log). Defer the headers until the stream actually
+  // opens, and turn an open error into a proper status — an unhandled stream
+  // 'error' would otherwise crash the whole server.
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    const status = err.code === "EPERM" || err.code === "EACCES" ? 403 : err.code === "ENOENT" ? 404 : 500;
+    json(res, status, { error: err.message });
   });
-  createReadStream(fsPath).pipe(res);
+  stream.once("open", () => {
+    if (range) {
+      res.writeHead(206, {
+        "Content-Type": "application/octet-stream",
+        "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
+        "Content-Length": String(range.end - range.start + 1),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+      });
+    } else {
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": String(size),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+      });
+    }
+  });
+  stream.pipe(res);
+}
+
+/** Parse a single `bytes=a-b` range header against `size`. */
+function parseRange(
+  header: string | undefined,
+  size: number,
+): { start: number; end: number } | "unsatisfiable" | null {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) return null;
+  const hasStart = m[1] !== "";
+  const hasEnd = m[2] !== "";
+  let start: number;
+  let end: number;
+  if (hasStart) {
+    start = parseInt(m[1]!, 10);
+    end = hasEnd ? parseInt(m[2]!, 10) : size - 1;
+  } else if (hasEnd) {
+    // Suffix range: last N bytes.
+    const n = parseInt(m[2]!, 10);
+    start = Math.max(0, size - n);
+    end = size - 1;
+  } else {
+    return null;
+  }
+  if (end >= size) end = size - 1;
+  if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
+    return "unsatisfiable";
+  }
+  return { start, end };
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {

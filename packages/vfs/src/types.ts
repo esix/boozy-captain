@@ -55,6 +55,13 @@ export interface FsPlugin {
   stat(uri: Uri): Promise<Stat>;
   read?(uri: Uri): ReadableStream<Uint8Array>;
   /**
+   * Random-access read of `[offset, offset+length)`. Enables the lister to
+   * view huge / network files instantly by fetching only the visible window.
+   * Optional — schemes that can't seek (synthetic, streaming-only) omit it and
+   * callers fall back to a buffered whole-file read.
+   */
+  readRange?(uri: Uri, offset: number, length: number): Promise<Uint8Array>;
+  /**
    * Observe a directory: initial scan (`add`* then `ready`) followed by live
    * change events until aborted. The `signal` is the cancellation channel —
    * aborting it must promptly tear down any underlying resource (e.g. a

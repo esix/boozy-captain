@@ -129,6 +129,24 @@ export class HttpFs implements FsPlugin {
     return (await res.json()) as DriveInfo[];
   }
 
+  /**
+   * Random-access read via an HTTP Range request — the server responds 206
+   * with just the slice (backed by a ranged file read), so only the requested
+   * bytes cross the wire. If a server ignores Range and returns the whole file
+   * (200), we slice client-side as a fallback.
+   */
+  async readRange(uri: Uri, offset: number, length: number): Promise<Uint8Array> {
+    const url = `${this.baseUrl}/read?uri=${encodeURIComponent(uri)}`;
+    const end = offset + length - 1;
+    const res = await fetch(url, { headers: { Range: `bytes=${offset}-${end}` } });
+    if (!res.ok && res.status !== 206) throw new Error(`readRange ${uri}: HTTP ${res.status}`);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (res.status === 200 && buf.length > length) {
+      return buf.subarray(offset, offset + length);
+    }
+    return buf;
+  }
+
   read(uri: Uri): ReadableStream<Uint8Array> {
     const url = `${this.baseUrl}/read?uri=${encodeURIComponent(uri)}`;
     // Wrap in a fresh stream so we can defer the fetch until the consumer

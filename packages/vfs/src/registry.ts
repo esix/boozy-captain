@@ -40,6 +40,18 @@ export class VfsRegistry {
     return plugin.read(uri);
   }
 
+  /** Whether the scheme supports random-access (range) reads. */
+  canReadRange(uri: Uri): boolean {
+    return this.resolve(uri).readRange !== undefined;
+  }
+
+  /** Random-access read of `[offset, offset+length)`. Throws if unsupported. */
+  readRange(uri: Uri, offset: number, length: number): Promise<Uint8Array> {
+    const plugin = this.resolve(uri);
+    if (!plugin.readRange) throw new Error(`Scheme does not support readRange: ${plugin.scheme}`);
+    return plugin.readRange(uri, offset, length);
+  }
+
   /**
    * Observe a directory. If the plugin supports watching, delegate to it;
    * otherwise adapt the finite list() into `add`* + a single `ready` (no live

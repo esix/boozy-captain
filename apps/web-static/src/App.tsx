@@ -428,7 +428,7 @@ function buildFkeyRegistry(
       // Lister content is unchanged.
       surfaces.open(
         ({ handle }: { handle: SurfaceHandle }) => (
-          <Lister vfs={vfs} uri={item.uri} name={item.name} onClose={handle.close} />
+          <Lister vfs={vfs} uri={item.uri} name={item.name} size={item.size} onClose={handle.close} />
         ),
         { kind: "modal", title: `View — ${item.name}` },
       );

@@ -1,5 +1,5 @@
-import type { Stats } from "node:fs";
-import { basename, resolve as resolvePath } from "node:path";
+import { promises as fs, type Stats } from "node:fs";
+import { basename, join, resolve as resolvePath } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import { buildUri } from "./uri.js";
 import { statToWire, type WireStat } from "./fsmap.js";
@@ -29,17 +29,21 @@ export interface Subscriber {
  */
 class DirWatch {
   private readonly watcher: FSWatcher;
+  private readonly fsPath: string;
   private readonly entries = new Map<string, WireStat>(); // child uri -> stat
   private ready = false;
   private readonly subs = new Set<Subscriber>();
   private readonly rootResolved: string;
   private destroyed = false;
+  private reconcileTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconciling = false;
 
   constructor(
     fsPath: string,
     private readonly uriPath: string,
     private readonly onEmpty: () => void,
   ) {
+    this.fsPath = fsPath;
     this.rootResolved = resolvePath(fsPath);
     this.watcher = chokidar.watch(fsPath, {
       depth: 0,
@@ -53,8 +57,14 @@ class DirWatch {
         if (resolvePath(full) !== this.rootResolved) this.upsert("add", full, st);
       })
       .on("change", (full, st) => this.upsert("change", full, st))
-      .on("unlink", (full) => this.remove(full))
-      .on("unlinkDir", (full) => this.remove(full))
+      // Removals are treated as a *hint*, not truth. On Windows, a chokidar
+      // watcher for a nested path (a panel navigating into a subdir of one
+      // another panel watches) can make this watcher spuriously fire `unlink`
+      // for live entries — which, taken at face value, empties the other
+      // panel. Instead of deleting on the event, re-read the directory and
+      // reconcile: a spurious unlink leaves the file on disk, so it survives.
+      .on("unlink", () => this.scheduleReconcile())
+      .on("unlinkDir", () => this.scheduleReconcile())
       .on("ready", () => {
         this.ready = true;
         this.broadcast({ type: "ready" });
@@ -73,16 +83,20 @@ class DirWatch {
   private destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this.reconcileTimer) clearTimeout(this.reconcileTimer);
     for (const sub of this.subs) sub.end();
     this.subs.clear();
     void this.watcher.close();
     this.onEmpty();
   }
 
-  private childUri(full: string): string {
-    const name = basename(full);
+  private childUriForName(name: string): string {
     const p = this.uriPath.endsWith("/") ? this.uriPath + name : `${this.uriPath}/${name}`;
     return buildUri("file", p);
+  }
+
+  private childUri(full: string): string {
+    return this.childUriForName(basename(full));
   }
 
   private upsert(type: "add" | "change", full: string, st?: Stats): void {
@@ -93,10 +107,55 @@ class DirWatch {
     this.broadcast({ type, stat });
   }
 
-  private remove(full: string): void {
-    const uri = this.childUri(full);
-    this.entries.delete(uri);
-    this.broadcast({ type: "unlink", uri });
+  private scheduleReconcile(): void {
+    if (this.reconcileTimer || this.destroyed) return;
+    this.reconcileTimer = setTimeout(() => {
+      this.reconcileTimer = null;
+      void this.reconcile();
+    }, 200);
+  }
+
+  /**
+   * Re-read the directory and bring `entries` in line with disk: emit `unlink`
+   * for entries that are really gone, `add` for ones that appeared. This is the
+   * source of truth for removals, so spurious chokidar unlinks can't empty a
+   * panel — the files are still on disk and survive the reconcile.
+   */
+  private async reconcile(): Promise<void> {
+    if (this.destroyed || this.reconciling) return;
+    this.reconciling = true;
+    try {
+      let names: Set<string>;
+      try {
+        const dirents = await fs.readdir(this.fsPath, { withFileTypes: true });
+        names = new Set(dirents.map((d) => d.name));
+      } catch {
+        // The directory itself is gone — everything is genuinely unlinked.
+        names = new Set();
+      }
+      // Removals: tracked entries no longer present on disk.
+      for (const [uri, stat] of [...this.entries]) {
+        if (!names.has(stat.name)) {
+          this.entries.delete(uri);
+          this.broadcast({ type: "unlink", uri });
+        }
+      }
+      // Additions: present on disk but not tracked (also covers missed adds).
+      for (const name of names) {
+        const uri = this.childUriForName(name);
+        if (this.entries.has(uri)) continue;
+        try {
+          const st = await fs.lstat(join(this.fsPath, name));
+          const stat = statToWire(name, uri, st);
+          this.entries.set(uri, stat);
+          this.broadcast({ type: "add", stat });
+        } catch {
+          /* vanished between readdir and lstat — skip */
+        }
+      }
+    } finally {
+      this.reconciling = false;
+    }
   }
 
   private broadcast(ev: WatchEvent): void {

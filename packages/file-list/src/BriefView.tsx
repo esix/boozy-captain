@@ -101,9 +101,13 @@ function BriefBody(props: FileListViewProps): JSX.Element {
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
       if (ctx) {
-        ctx.font = `${tcTheme.font.size}px ${tcTheme.font.ui}`;
+        // Directories render at weight 500 (see styles.dirText); measuring
+        // them at the normal weight under-counts and clips long dir names.
+        const fontFile = `${tcTheme.font.size}px ${tcTheme.font.ui}`;
+        const fontDir = `500 ${tcTheme.font.size}px ${tcTheme.font.ui}`;
         let max = MIN_COL_WIDTH;
         for (const d of display) {
+          ctx.font = d.isDir ? fontDir : fontFile;
           const w =
             ctx.measureText(d.name).width +
             (d.ext ? ctx.measureText(d.ext).width + NAME_EXT_GAP : 0);
@@ -121,8 +125,12 @@ function BriefBody(props: FileListViewProps): JSX.Element {
   }, [display]);
 
   // Column width capped to panel width; if a single name is wider, truncate.
-  // Add overhead for row padding (2*4) + icon (14) + icon margin (2) + gutter.
-  const ROW_OVERHEAD = 8 + 14 + 2 + COL_GUTTER;
+  // Overhead = row padding (2*4) + icon (14) + icon margin (2), plus a 2px
+  // slack so an exact-fit name isn't sub-pixel-clipped into an ellipsis. The
+  // inter-column gutter is NOT included here — it's a margin between columns
+  // (see the column's marginRight), so the cursor caret hugs the text instead
+  // of carrying ~10px of dead space on the right.
+  const ROW_OVERHEAD = 8 + 14 + 2 + 2;
   const naturalColWidth = widest + ROW_OVERHEAD;
   // Subtract one full pixel from the clamp. onLayout on the outer View can
   // report an integer (e.g. 425) while the inner ScrollView's content area
@@ -138,7 +146,8 @@ function BriefBody(props: FileListViewProps): JSX.Element {
   const baseBodyHeight = Math.max(0, container.height - HEADER_HEIGHT);
   const naiveRowsPerCol = Math.max(1, Math.floor(baseBodyHeight / ROW_HEIGHT));
   const naiveCols = Math.ceil(rows.length / naiveRowsPerCol);
-  const willScroll = container.width > 0 && naiveCols * colWidth > container.width;
+  const naiveContentWidth = naiveCols * colWidth + Math.max(0, naiveCols - 1) * COL_GUTTER;
+  const willScroll = container.width > 0 && naiveContentWidth > container.width;
   const bodyHeight = Math.max(0, baseBodyHeight - (willScroll ? SCROLLBAR_HEIGHT : 0));
   const rowsPerCol = Math.max(1, Math.floor(bodyHeight / ROW_HEIGHT));
 
@@ -154,7 +163,9 @@ function BriefBody(props: FileListViewProps): JSX.Element {
   useEffect(() => {
     if (!scrollRef.current || container.width === 0 || rowsPerCol === 0) return;
     const cursorCol = Math.floor(cursor / rowsPerCol);
-    const x = Math.max(0, cursorCol * colWidth - colWidth);
+    // Columns are colWidth wide plus a COL_GUTTER margin between them.
+    const stride = colWidth + COL_GUTTER;
+    const x = Math.max(0, cursorCol * stride - stride);
     scrollRef.current.scrollTo({ x, animated: false });
   }, [cursor, rowsPerCol, colWidth, container.width]);
 
@@ -194,7 +205,13 @@ function BriefBody(props: FileListViewProps): JSX.Element {
           testID={`${testID}-brief-scroll`}
         >
           {columns.map((colRows, ci) => (
-            <View key={ci} style={[styles.column, { width: colWidth }]}>
+            <View
+              key={ci}
+              style={[
+                styles.column,
+                { width: colWidth, marginRight: ci < columns.length - 1 ? COL_GUTTER : 0 },
+              ]}
+            >
               {colRows.map((row, ri) => {
                 const flatIndex = ci * rowsPerCol + ri;
                 // Capture URI at render time — survives row reshuffles caused
@@ -230,12 +247,15 @@ function BriefBody(props: FileListViewProps): JSX.Element {
 interface DisplayParts {
   name: string;
   ext: string;
+  /** Directories render at fontWeight 500 — must be measured at that weight. */
+  isDir: boolean;
 }
 
 function displayFor(row: Row): DisplayParts {
-  if (row.kind === "parent") return { name: "[..]", ext: "" };
-  const s = splitName(row.stat.name, row.stat.kind === "dir");
-  return { name: s.displayName, ext: s.ext };
+  if (row.kind === "parent") return { name: "[..]", ext: "", isDir: true };
+  const isDir = row.stat.kind === "dir";
+  const s = splitName(row.stat.name, isDir);
+  return { name: s.displayName, ext: s.ext, isDir };
 }
 
 interface BriefRowProps {
@@ -383,6 +403,13 @@ const styles = StyleSheet.create({
   cell: {
     fontFamily: tcTheme.font.ui,
     fontSize: tcTheme.font.size,
+    // lineHeight a hair above ROW_HEIGHT so bold descenders (g/y/p) aren't
+    // clipped by numberOfLines={1}'s overflow:hidden, and translateY nudges
+    // the glyphs up — Segoe UI's descent is small relative to its ascent, so
+    // it otherwise sits ~1px low in the line box (caps gapped at top,
+    // descenders touching the cursor's bottom edge).
+    lineHeight: ROW_HEIGHT + 1,
+    transform: [{ translateY: -1 }],
   },
   nameCell: {
     flex: 1,

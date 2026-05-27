@@ -245,6 +245,11 @@ const styles = StyleSheet.create({
   cell: {
     fontFamily: tcTheme.font.ui,
     fontSize: tcTheme.font.size,
+    // lineHeight a hair above ROW_HEIGHT so descenders aren't clipped by
+    // overflow:hidden; translateY centers Segoe UI's low-sitting glyphs (see
+    // BriefView for the longer explanation).
+    lineHeight: ROW_HEIGHT + 1,
+    transform: [{ translateY: -1 }],
   },
   alignRight: { textAlign: "right" },
   iconCell: { width: 18, alignItems: "center", justifyContent: "center", marginRight: 2 },
